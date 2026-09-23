@@ -1,8 +1,24 @@
 # 远程服务 | Remote Services
 
-一个面向 Android 的自托管网络服务控制台：把 iStoreOS / OpenWrt 管理入口、系统概览和 OpenClash 控制收纳在同一个适配手机的应用中。项目目前处于早期预览阶段，部分设备和路由器功能仍需在真实环境验证。
+远程服务是一款面向家庭网络与自托管用户的 Android 手机控制台，用来集中管理 iStoreOS / OpenWrt 服务、查看路由器状态，并操作 OpenClash。它不替代路由器，也不要求把管理流量交给第三方云平台：手机直接连接你配置的路由器和服务地址。
 
-An Android companion for self-hosted network services. It brings iStoreOS / OpenWrt access, a system dashboard, and OpenClash controls into a phone-friendly app. This project is an early preview; router-specific behavior still needs validation on real hardware.
+它主要解决手机管理软路由时的三类麻烦：
+
+- **入口太分散**：把服务列表、可自定义的状态卡片和网页管理入口放在同一个适配手机的界面，减少来回找书签、切换页面和在小屏网页中操作。
+- **内外网地址难切换**：服务可配置内网与公网地址；应用依据可信 Wi-Fi 和连通性选择可用线路，内网不可达时回退公网，避免每次离家或回家都手工改网址。
+- **状态与控制割裂**：在兼容的 iStoreOS / OpenWrt 与 OpenClash 环境中，通过设备提供的 LuCI、ubus 和 Clash 兼容接口读取状态，并在应用内查看策略组、切换节点和测试单个节点延迟。
+
+连接设置与可保存的登录凭据留在本机，凭据由 Android Keystore 保护；是否能复用网页登录状态取决于服务端认证方式，并非对任意网页都能保证免登录。只要手机还能访问路由器内网，查看和管理本地服务不需要互联网；在线更新和可选日志反馈需要互联网。当前版本为 Beta，路由器字段、登录行为和 Android 16 真机端到端表现仍需按实际设备验证。
+
+Remote Services is an Android control panel for home-network and self-hosted services. It brings iStoreOS / OpenWrt service access, router status, and OpenClash controls into one phone-friendly app. It does not replace your router or route management traffic through a third-party cloud: the phone connects directly to the router and service endpoints you configure.
+
+It targets three common pain points when managing a router from a phone:
+
+- **Scattered entry points:** keep service links, customizable status cards, and web administration pages together instead of hunting through bookmarks and switching between cramped mobile pages.
+- **Changing LAN/WAN addresses:** configure private and public addresses for a service; the app uses trusted Wi-Fi and reachability checks to choose a route, falling back to the public endpoint when the LAN endpoint cannot be reached.
+- **Disconnected status and controls:** on compatible iStoreOS / OpenWrt and OpenClash setups, read status through available LuCI, ubus, and Clash-compatible APIs, then inspect proxy groups, switch nodes, and test an individual node's latency.
+
+Connection settings and any saved credentials stay on the device; Android Keystore protects credentials. Reusing a web login depends on the service's authentication method, so universal password-free access is not guaranteed. Router access still works without internet when the phone can reach the LAN; online updates and optional log feedback require internet. This is a Beta release, and router-specific data, authentication, and Android 16 device behavior still need validation in the target environment.
 
 ## 功能概览 | Features
 
