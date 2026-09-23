@@ -1,0 +1,57 @@
+.gradle/
+.kotlin/
+.idea/
+local.properties
+**/build/
+*.iml
+captures/
+*.hprof
+keystore.properties
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.dpapi
+signing-state.json
+*.pem
+*.key
+*.asc
+release/
+release-staging/
+scripts/test-fixtures/
+
+# Private operational material and device-specific QA captures must never be
+# published with the open-source client.
+/qa/
+/docs/progress/
+/docs/release/
+/docs/modules/feedback-server.md
+
+# Local deployment/signing automation contains host-specific paths and setup.
+/scripts/Build-RemoteServicesRelease.ps1
+/scripts/Publish-RemoteServicesRelease.ps1
+/scripts/RemoteServicesSigning.psm1
+/scripts/ReleaseManifest.psm1
+/scripts/Initialize-RemoteServicesSigning.ps1
+/scripts/Get-RemoteServicesSigningStatus.ps1
+/scripts/deploy-feedback-server.sh
+/scripts/rollback-feedback-server.sh
+/scripts/*
+!/scripts/Set-RemoteServicesVersion.ps1
+
+# Do not publish server installation files or generated Python bytecode.
+/server/feedback/*.service
+/server/feedback/*.conf
+**/__pycache__/
+*.py[cod]
+*.log
+*.db
+*.sqlite
+*.sqlite3
+.env
+.env.*
+
+# Keep generated concept previews out of the source repository; retain the
+# selected editable SVG icon source and its documentation.
+/design/icon-concepts/*.png
+/design/icon-concepts/selected-06-C/rendered/

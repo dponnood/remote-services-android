@@ -1,0 +1,51 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#0B1633"
+        android:pathData="M0,0h108v108h-108z" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#07122D"
+        android:strokeWidth="26"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M34,34 C47,21 68,22 79,39 C87,51 85,66 76,76" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#07122D"
+        android:strokeWidth="26"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M76,76 C67,85 54,89 42,85 C29,81 22,71 22,60 C22,49 27,40 34,34" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#07122D"
+        android:strokeWidth="26"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M34,34 C47,27 62,29 71,40 C81,52 78,69 62,85" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#29E0E5"
+        android:strokeWidth="17"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M34,34 C47,21 68,22 79,39 C87,51 85,66 76,76" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#FF9C20"
+        android:strokeWidth="17"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M76,76 C67,85 54,89 42,85 C29,81 22,71 22,60 C22,49 27,40 34,34" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#246BFF"
+        android:strokeWidth="17"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M34,34 C47,27 62,29 71,40 C81,52 78,69 62,85" />
+</vector>

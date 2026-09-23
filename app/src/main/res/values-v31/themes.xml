@@ -1,0 +1,11 @@
+<resources>
+    <style name="Theme.RemoteServices" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#0061A4</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_remote_service_splash</item>
+        <item name="android:windowSplashScreenBackground">@color/remote_service_icon_background</item>
+    </style>
+</resources>

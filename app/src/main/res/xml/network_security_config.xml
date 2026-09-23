@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    HTTP is opt-in at the service configuration level. The WebView still
+    enforces an exact HTTP(S) origin allow-list, so enabling cleartext here
+    only makes explicitly configured legacy LAN services reachable; it does
+    not make arbitrary navigation part of the app UI.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
