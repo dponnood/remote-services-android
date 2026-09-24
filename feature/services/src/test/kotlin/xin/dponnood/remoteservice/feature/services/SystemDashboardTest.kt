@@ -10,6 +10,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import xin.dponnood.remoteservice.core.model.ServiceConfig
 import xin.dponnood.remoteservice.core.model.ServiceType
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -193,6 +194,53 @@ class SystemDashboardTest {
                 catalogue = catalogue,
             ).isEmpty(),
         )
+    }
+
+    @Test
+    fun manualSelectionProxyGroupIsPromotedAndOtherGroupsKeepTheirOrder() {
+        val groups = listOf(
+            OpenClashProxyGroup("自动选择", "node-a", listOf("node-a")),
+            OpenClashProxyGroup("节点备用", "node-b", listOf("node-b")),
+            OpenClashProxyGroup("手动选择", "node-c", listOf("node-c")),
+        )
+
+        assertEquals(
+            listOf("手动选择", "自动选择", "节点备用"),
+            prioritizeManualSelectionProxyGroups(groups).map(OpenClashProxyGroup::name),
+        )
+    }
+
+    @Test
+    fun latencyBatchTestsEachDistinctCandidateAndContinuesAfterFailure() = runTest {
+        val service = ServiceConfig(id = "clash", displayName = "Zashboard", serviceType = ServiceType.OPENCLASH)
+        val first = OpenClashNodeLatencyTarget("手动选择", "node-a")
+        val second = OpenClashNodeLatencyTarget("手动选择", "node-b")
+        val third = OpenClashNodeLatencyTarget("手动选择", "node-c")
+        val started = mutableListOf<OpenClashNodeLatencyTarget>()
+        val completed = mutableListOf<Pair<OpenClashNodeLatencyTarget, OpenClashNodeLatencyResult>>()
+        val tester = object : OpenClashNodeLatencyTester {
+            override suspend fun testNodeLatency(
+                service: ServiceConfig,
+                groupName: String,
+                nodeName: String,
+            ): OpenClashNodeLatencyResult = when (nodeName) {
+                "node-b" -> OpenClashNodeLatencyResult.Failure("timeout")
+                "node-c" -> error("connection reset")
+                else -> OpenClashNodeLatencyResult.Success(42)
+            }
+        }
+
+        tester.testNodeLatencies(
+            service = service,
+            targets = listOf(first, second, first, third),
+            onNodeTesting = { started += it },
+            onNodeResult = { target, result -> completed += target to result },
+        )
+
+        assertEquals(listOf(first, second, third), started)
+        assertEquals(first to OpenClashNodeLatencyResult.Success(42), completed[0])
+        assertEquals(second to OpenClashNodeLatencyResult.Failure("timeout"), completed[1])
+        assertEquals(third to OpenClashNodeLatencyResult.Failure("延迟检测失败，请稍后重试"), completed[2])
     }
 
     @Test

@@ -605,6 +605,21 @@ data class OpenClashProxyGroup(
     val candidates: List<String>,
 )
 
+data class OpenClashNodeLatencyTarget(
+    val groupName: String,
+    val nodeName: String,
+)
+
+/** Keep the explicit manual-choice group easy to find without reordering the others. */
+fun prioritizeManualSelectionProxyGroups(groups: List<OpenClashProxyGroup>): List<OpenClashProxyGroup> =
+    groups.sortedBy { group ->
+        val normalizedName = group.name.trim().lowercase(Locale.ROOT)
+            .replace('_', ' ')
+            .replace('-', ' ')
+            .replace(Regex("\\s+"), " ")
+        if (normalizedName in setOf("手动选择", "manual", "manual select", "manual selection")) 0 else 1
+    }
+
 /** Values returned by a vendor-specific or app-server-specific adapter. */
 data class SystemInfoSnapshot(
     val hostname: String? = null,
@@ -691,6 +706,26 @@ fun interface OpenClashNodeLatencyTester {
         groupName: String,
         nodeName: String,
     ): OpenClashNodeLatencyResult
+
+    /** Tests each requested proxy once, reporting start and completion for progress UI. */
+    suspend fun testNodeLatencies(
+        service: ServiceConfig,
+        targets: List<OpenClashNodeLatencyTarget>,
+        onNodeTesting: suspend (OpenClashNodeLatencyTarget) -> Unit = {},
+        onNodeResult: suspend (OpenClashNodeLatencyTarget, OpenClashNodeLatencyResult) -> Unit,
+    ) {
+        targets.distinct().forEach { target ->
+            onNodeTesting(target)
+            val result = try {
+                testNodeLatency(service, target.groupName, target.nodeName)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                OpenClashNodeLatencyResult.Failure("延迟检测失败，请稍后重试")
+            }
+            onNodeResult(target, result)
+        }
+    }
 }
 
 /**

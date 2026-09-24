@@ -143,6 +143,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.flowOf
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.focus.FocusRequester
@@ -373,6 +374,10 @@ fun ServicesScreen(
     var switchingNodeGroup by remember(selectedServiceId) { mutableStateOf<String?>(null) }
     var nodeSwitchFeedback by remember(selectedServiceId) { mutableStateOf<String?>(null) }
     var testingNode by remember(selectedServiceId) { mutableStateOf<OpenClashNodeLatencyKey?>(null) }
+    var latencyBatchProgress by remember(selectedServiceId) {
+        mutableStateOf<OpenClashLatencyBatchProgress?>(null)
+    }
+    var latencyBatchJob by remember(selectedServiceId) { mutableStateOf<Job?>(null) }
     val nodeLatencyResults = remember(selectedServiceId) {
         mutableStateMapOf<OpenClashNodeLatencyKey, OpenClashNodeLatencyDisplay>()
     }
@@ -406,7 +411,7 @@ fun ServicesScreen(
     fun testOpenClashNode(groupName: String, nodeName: String) {
         val service = selectedService?.config ?: return
         val tester = openClashNodeLatencyTester ?: return
-        if (testingNode != null || switchingNodeGroup != null) return
+        if (testingNode != null || switchingNodeGroup != null || latencyBatchProgress != null) return
         val key = OpenClashNodeLatencyKey(groupName, nodeName)
         testingNode = key
         nodeLatencyResults[key] = OpenClashNodeLatencyDisplay.Testing
@@ -420,13 +425,99 @@ fun ServicesScreen(
             }
             if (selectedServiceIdState.value != service.id) return@launch
             testingNode = null
-            nodeLatencyResults[key] = when (result) {
-                is OpenClashNodeLatencyResult.Success ->
-                    OpenClashNodeLatencyDisplay.Success(result.delayMillis)
-                is OpenClashNodeLatencyResult.Failure ->
-                    OpenClashNodeLatencyDisplay.Failure(result.message)
+            nodeLatencyResults[key] = result.toLatencyDisplay()
+        }
+    }
+
+    fun testOpenClashNodeBatch(
+        targets: List<OpenClashNodeLatencyTarget>,
+        label: String,
+        groupName: String? = null,
+    ) {
+        val service = selectedService?.config ?: return
+        val tester = openClashNodeLatencyTester ?: return
+        val uniqueTargets = targets.distinct()
+        if (uniqueTargets.isEmpty() || testingNode != null || switchingNodeGroup != null ||
+            latencyBatchProgress != null
+        ) return
+
+        latencyBatchProgress = OpenClashLatencyBatchProgress(
+            label = label,
+            groupName = groupName,
+            total = uniqueTargets.size,
+        )
+        latencyBatchJob = dashboardScope.launch {
+            var successfulTests = 0
+            try {
+                tester.testNodeLatencies(
+                    service = service,
+                    targets = uniqueTargets,
+                    onNodeTesting = { target ->
+                        if (selectedServiceIdState.value != service.id) {
+                            throw CancellationException("Selected service changed")
+                        }
+                        val key = OpenClashNodeLatencyKey(target.groupName, target.nodeName)
+                        testingNode = key
+                        nodeLatencyResults[key] = OpenClashNodeLatencyDisplay.Testing
+                        latencyBatchProgress = latencyBatchProgress?.copy(
+                            activeNodeName = target.nodeName,
+                        )
+                    },
+                    onNodeResult = { target, result ->
+                        if (selectedServiceIdState.value != service.id) {
+                            throw CancellationException("Selected service changed")
+                        }
+                        val key = OpenClashNodeLatencyKey(target.groupName, target.nodeName)
+                        testingNode = null
+                        nodeLatencyResults[key] = result.toLatencyDisplay()
+                        if (result is OpenClashNodeLatencyResult.Success) successfulTests++
+                        latencyBatchProgress = latencyBatchProgress?.copy(
+                            completed = (latencyBatchProgress?.completed ?: 0) + 1,
+                            activeNodeName = null,
+                        )
+                    },
+                )
+                if (selectedServiceIdState.value == service.id) {
+                    nodeSwitchFeedback = "${label}完成：成功 $successfulTests/${uniqueTargets.size} 个节点"
+                }
+            } catch (cancelled: CancellationException) {
+                if (selectedServiceIdState.value == service.id) nodeSwitchFeedback = "测速已取消"
+                throw cancelled
+            } finally {
+                if (selectedServiceIdState.value == service.id) {
+                    testingNode?.let { key ->
+                        nodeLatencyResults[key] = OpenClashNodeLatencyDisplay.Failure("已取消")
+                    }
+                    testingNode = null
+                    latencyBatchProgress = null
+                    latencyBatchJob = null
+                }
             }
         }
+    }
+
+    fun testOpenClashGroup(groupName: String) {
+        val group = prioritizeManualSelectionProxyGroups(dashboardState.selectableGroups)
+            .firstOrNull { it.name == groupName } ?: return
+        testOpenClashNodeBatch(
+            targets = group.candidates.map { node -> OpenClashNodeLatencyTarget(group.name, node) },
+            label = "本组测速",
+            groupName = group.name,
+        )
+    }
+
+    fun testAllOpenClashNodes() {
+        val orderedGroups = prioritizeManualSelectionProxyGroups(dashboardState.selectableGroups)
+        testOpenClashNodeBatch(
+            targets = orderedGroups.flatMap { group ->
+                group.candidates.map { node -> OpenClashNodeLatencyTarget(group.name, node) }
+            },
+                label = "总测速",
+        )
+    }
+
+    fun cancelOpenClashNodeBatch() {
+        latencyBatchJob?.cancel()
     }
 
     fun beginDashboardCardEdit() {
@@ -653,8 +744,12 @@ fun ServicesScreen(
                 nodeSwitchFeedback = nodeSwitchFeedback,
                 testingNode = testingNode,
                 nodeLatencyResults = nodeLatencyResults,
+                latencyBatchProgress = latencyBatchProgress,
                 onSwitchOpenClashNode = ::switchOpenClashNode,
                 onTestOpenClashNode = ::testOpenClashNode,
+                onTestOpenClashGroup = ::testOpenClashGroup,
+                onTestAllOpenClashNodes = ::testAllOpenClashNodes,
+                onCancelOpenClashNodeBatch = ::cancelOpenClashNodeBatch,
                 onOpenClashSelectorSheetChange = { nodeSelectorSheetOpen = it },
                 liveMonitoring = dashboardService != null,
                 reduceMotion = reduceMotion,
@@ -773,8 +868,12 @@ private fun ServicesContent(
     nodeSwitchFeedback: String?,
     testingNode: OpenClashNodeLatencyKey?,
     nodeLatencyResults: Map<OpenClashNodeLatencyKey, OpenClashNodeLatencyDisplay>,
+    latencyBatchProgress: OpenClashLatencyBatchProgress?,
     onSwitchOpenClashNode: (String, String) -> Unit,
     onTestOpenClashNode: (String, String) -> Unit,
+    onTestOpenClashGroup: (String) -> Unit,
+    onTestAllOpenClashNodes: () -> Unit,
+    onCancelOpenClashNodeBatch: () -> Unit,
     onOpenClashSelectorSheetChange: (Boolean) -> Unit,
     liveMonitoring: Boolean,
     reduceMotion: Boolean,
@@ -883,8 +982,12 @@ private fun ServicesContent(
                                 nodeSwitchFeedback = nodeSwitchFeedback,
                                 testingNode = testingNode,
                                 nodeLatencyResults = nodeLatencyResults,
+                                latencyBatchProgress = latencyBatchProgress,
                                 onSwitchNode = onSwitchOpenClashNode,
                                 onTestNode = onTestOpenClashNode,
+                                onTestGroup = onTestOpenClashGroup,
+                                onTestAllNodes = onTestAllOpenClashNodes,
+                                onCancelBatch = onCancelOpenClashNodeBatch,
                                 onSelectorSheetVisibilityChange = onOpenClashSelectorSheetChange,
                                 onOpenService = { onOpenService(selectedService.config) },
                                 onEdit = { onIntent(ServicesIntent.EditClicked(selectedService.config.id)) },
@@ -944,8 +1047,12 @@ private fun DashboardSection(
     nodeSwitchFeedback: String?,
     testingNode: OpenClashNodeLatencyKey?,
     nodeLatencyResults: Map<OpenClashNodeLatencyKey, OpenClashNodeLatencyDisplay>,
+    latencyBatchProgress: OpenClashLatencyBatchProgress?,
     onSwitchNode: (String, String) -> Unit,
     onTestNode: (String, String) -> Unit,
+    onTestGroup: (String) -> Unit,
+    onTestAllNodes: () -> Unit,
+    onCancelBatch: () -> Unit,
     onSelectorSheetVisibilityChange: (Boolean) -> Unit,
     onOpenService: () -> Unit,
     onEdit: () -> Unit,
@@ -1142,8 +1249,12 @@ private fun DashboardSection(
                                     nodeLatencyEnabled = nodeLatencyEnabled,
                                     testingNode = testingNode,
                                     latencyResults = nodeLatencyResults,
+                                    latencyBatchProgress = latencyBatchProgress,
                                     onSelectNode = onSwitchNode,
                                     onTestNode = onTestNode,
+                                    onTestGroup = onTestGroup,
+                                    onTestAllNodes = onTestAllNodes,
+                                    onCancelBatch = onCancelBatch,
                                     onSheetVisibilityChange = onSelectorSheetVisibilityChange,
                                 )
                             } else {
@@ -1577,10 +1688,30 @@ private fun DashboardCardRepositoryRow(
 
 private data class OpenClashNodeLatencyKey(val groupName: String, val nodeName: String)
 
+private data class OpenClashLatencyBatchProgress(
+    val label: String,
+    val groupName: String? = null,
+    val total: Int,
+    val completed: Int = 0,
+    val activeNodeName: String? = null,
+)
+
+private fun OpenClashNodeLatencyResult.toLatencyDisplay(): OpenClashNodeLatencyDisplay = when (this) {
+    is OpenClashNodeLatencyResult.Success -> OpenClashNodeLatencyDisplay.Success(delayMillis)
+    is OpenClashNodeLatencyResult.Failure -> OpenClashNodeLatencyDisplay.Failure(message)
+}
+
 private sealed interface OpenClashNodeLatencyDisplay {
     data object Testing : OpenClashNodeLatencyDisplay
     data class Success(val delayMillis: Int) : OpenClashNodeLatencyDisplay
     data class Failure(val message: String) : OpenClashNodeLatencyDisplay
+}
+
+private fun OpenClashNodeLatencyDisplay?.cardLatencyLabel(): String = when (this) {
+    OpenClashNodeLatencyDisplay.Testing -> "当前节点延迟：检测中…"
+    is OpenClashNodeLatencyDisplay.Success -> "当前节点延迟：$delayMillis ms"
+    is OpenClashNodeLatencyDisplay.Failure -> "当前节点延迟：检测失败"
+    null -> "当前节点延迟：未测速"
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1593,10 +1724,15 @@ private fun OpenClashNodeSelectorCard(
     nodeLatencyEnabled: Boolean,
     testingNode: OpenClashNodeLatencyKey?,
     latencyResults: Map<OpenClashNodeLatencyKey, OpenClashNodeLatencyDisplay>,
+    latencyBatchProgress: OpenClashLatencyBatchProgress?,
     onSelectNode: (String, String) -> Unit,
     onTestNode: (String, String) -> Unit,
+    onTestGroup: (String) -> Unit,
+    onTestAllNodes: () -> Unit,
+    onCancelBatch: () -> Unit,
     onSheetVisibilityChange: (Boolean) -> Unit,
 ) {
+    val orderedGroups = remember(groups) { prioritizeManualSelectionProxyGroups(groups) }
     var selectedGroup by remember { mutableStateOf<OpenClashProxyGroup?>(null) }
     LaunchedEffect(selectedGroup != null) {
         onSheetVisibilityChange(selectedGroup != null)
@@ -1620,18 +1756,36 @@ private fun OpenClashNodeSelectorCard(
                 Spacer(Modifier.width(8.dp))
                 Text("代理节点", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.weight(1f))
-                Text("运行时切换", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                FilledTonalButton(
+                    onClick = if (latencyBatchProgress != null) onCancelBatch else onTestAllNodes,
+                    enabled = latencyBatchProgress != null || (nodeLatencyEnabled &&
+                        testingNode == null && switchingGroup == null),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                ) {
+                    if (latencyBatchProgress != null) {
+                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(5.dp))
+                        Text("${latencyBatchProgress.label} ${latencyBatchProgress.completed}/${latencyBatchProgress.total} · 取消")
+                    } else {
+                        Icon(Icons.Outlined.Speed, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("总测速")
+                    }
+                }
             }
             Text(
                 "仅列出支持手动选择的 Selector 代理组；切换只影响当前运行状态，不修改路由器配置文件。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            groups.forEach { group ->
+            orderedGroups.forEach { group ->
+                val currentNodeLatency = group.currentNode?.let { node ->
+                    latencyResults[OpenClashNodeLatencyKey(group.name, node)]
+                }
                 OutlinedButton(
                     onClick = { selectedGroup = group },
                     modifier = Modifier.fillMaxWidth(),
-                    enabled = switchingGroup == null && testingNode == null,
+                    enabled = switchingGroup == null && testingNode == null && latencyBatchProgress == null,
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
                 ) {
                     Column(Modifier.weight(1f), horizontalAlignment = Alignment.Start) {
@@ -1640,6 +1794,17 @@ private fun OpenClashNodeSelectorCard(
                             "${group.candidates.size} 个候选 · 当前：${group.currentNode ?: "未返回"}",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            currentNodeLatency.cardLatencyLabel(),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = when (currentNodeLatency) {
+                                is OpenClashNodeLatencyDisplay.Success -> MaterialTheme.colorScheme.primary
+                                is OpenClashNodeLatencyDisplay.Failure -> MaterialTheme.colorScheme.error
+                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                            },
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -1666,7 +1831,7 @@ private fun OpenClashNodeSelectorCard(
     }
 
     selectedGroup?.let { requestedGroup ->
-        val group = groups.firstOrNull { it.name == requestedGroup.name } ?: requestedGroup
+        val group = orderedGroups.firstOrNull { it.name == requestedGroup.name } ?: requestedGroup
         ModalBottomSheet(
             onDismissRequest = { selectedGroup = null },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -1701,6 +1866,29 @@ private fun OpenClashNodeSelectorCard(
                 )
                 Spacer(Modifier.height(8.dp))
                 HorizontalDivider()
+                Spacer(Modifier.height(8.dp))
+                val batchLabel = latencyBatchProgress?.let { progress ->
+                    if (progress.groupName == group.name) "本组测速" else progress.label
+                }
+                FilledTonalButton(
+                    onClick = {
+                        if (latencyBatchProgress != null) onCancelBatch() else onTestGroup(group.name)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = latencyBatchProgress != null || (group.candidates.isNotEmpty() &&
+                        nodeLatencyEnabled && testingNode == null && switchingGroup == null),
+                ) {
+                    if (latencyBatchProgress != null) {
+                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                        Text("$batchLabel ${latencyBatchProgress.completed}/${latencyBatchProgress.total} · 取消")
+                    } else {
+                        Icon(Icons.Outlined.Speed, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("测速本组 · ${group.candidates.size} 个节点")
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
                 if (group.candidates.isEmpty()) {
                     Text(
                         "当前没有可选节点，请刷新 OpenClash 状态。",
@@ -1719,8 +1907,10 @@ private fun OpenClashNodeSelectorCard(
                             OpenClashNodeCandidateRow(
                                 node = node,
                                 isCurrent = node == group.currentNode,
-                                switchEnabled = nodeSwitchEnabled && switchingGroup == null && testingNode == null,
-                                latencyEnabled = nodeLatencyEnabled && switchingGroup == null && testingNode == null,
+                                switchEnabled = nodeSwitchEnabled && switchingGroup == null && testingNode == null &&
+                                    latencyBatchProgress == null,
+                                latencyEnabled = nodeLatencyEnabled && switchingGroup == null && testingNode == null &&
+                                    latencyBatchProgress == null,
                                 latencyState = latencyResults[key],
                                 isTesting = testingNode == key,
                                 onSwitch = {
