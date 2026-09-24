@@ -18,6 +18,12 @@ import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,15 +37,20 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -1062,7 +1073,7 @@ private fun ErrorScreen(
             Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(20.dp))
             Button(onClick = onRetry) { Text("重试") }
-            TextButton(onClick = onBack) { Text("返回服务列表") }
+            TextButton(onClick = onBack) { Text("关闭页面") }
         }
     }
 }
@@ -1347,6 +1358,13 @@ private fun ServiceWebScreen(
 
     val activeWindow = windows.firstOrNull { it.id == activeWindowId }
         ?: windows.firstOrNull()
+    var titleBarExpanded by remember(target.sessionKey) { mutableStateOf(true) }
+
+    LaunchedEffect(target.sessionKey, activeWindowId) {
+        titleBarExpanded = true
+        delay(WEB_PAGE_TOOLBAR_AUTO_HIDE_MS)
+        titleBarExpanded = false
+    }
 
     fun closeWindow(windowId: Int) {
         if (windowId == 0) return
@@ -1366,6 +1384,23 @@ private fun ServiceWebScreen(
             "已关闭应用内 WebView 窗口",
             context = mapOf("service_id" to service.id, "window_id" to windowId.toString()),
         )
+    }
+
+    fun closeCurrentPage() {
+        val currentWindow = activeWindow
+        if (currentWindow != null && currentWindow.id != 0) {
+            // A child WebView is a tab within the service page; close only
+            // that tab and return to its parent instead of leaving the app.
+            closeWindow(currentWindow.id)
+        } else {
+            logRepository.append(
+                LogLevel.INFO,
+                "WEB_PAGE_CLOSED",
+                "用户关闭服务网页",
+                context = mapOf("service_id" to service.id),
+            )
+            onBack()
+        }
     }
 
     fun handleWebBack() {
@@ -1422,26 +1457,34 @@ private fun ServiceWebScreen(
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        if (windows.size > 1) {
-                            "${service.displayName} · 窗口 ${windows.indexOfFirst { it.id == activeWindow?.id } + 1}"
-                        } else {
-                            service.displayName
-                        },
-                    )
-                },
-                // Keep the app bar back action consistent with the system
-                // back gesture: first traverse the active WebView history,
-                // then close a child window, and only then leave the service.
-                navigationIcon = { TextButton(onClick = { handleWebBack() }) { Text("返回") } },
-                actions = {
-                    TextButton(onClick = { showWindowPicker = true }) {
-                        Text("窗口${windows.size}")
-                    }
-                },
-            )
+            AnimatedVisibility(
+                visible = titleBarExpanded,
+                enter = fadeIn(animationSpec = tween(220)) +
+                    slideInVertically(animationSpec = tween(240), initialOffsetY = { -it }),
+                exit = fadeOut(animationSpec = tween(180)) +
+                    slideOutVertically(animationSpec = tween(240), targetOffsetY = { -it }),
+            ) {
+                TopAppBar(
+                    title = {
+                        Text(
+                            if (windows.size > 1) {
+                                "${service.displayName} · 窗口 ${windows.indexOfFirst { it.id == activeWindow?.id } + 1}"
+                            } else {
+                                service.displayName
+                            },
+                        )
+                    },
+                    // Back navigates the active WebView history. The separate
+                    // close action exits the root page or closes a child tab.
+                    navigationIcon = { TextButton(onClick = { handleWebBack() }) { Text("返回") } },
+                    actions = {
+                        TextButton(onClick = { closeCurrentPage() }) { Text("关闭页面") }
+                        TextButton(onClick = { showWindowPicker = true }) {
+                            Text("窗口${windows.size}")
+                        }
+                    },
+                )
+            }
         },
     ) { contentPadding ->
         Column(Modifier.fillMaxSize().padding(contentPadding)) {
@@ -1513,6 +1556,14 @@ private fun ServiceWebScreen(
                             )
                         }
                     }
+                    CollapsedWebPageControls(
+                        visible = !titleBarExpanded && pageError == null,
+                        windowCount = windows.size,
+                        modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
+                        onBack = { handleWebBack() },
+                        onOpenWindowPicker = { showWindowPicker = true },
+                        onClosePage = { closeCurrentPage() },
+                    )
                 }
             }
         }
@@ -1553,7 +1604,68 @@ private fun ServiceWebScreen(
     }
 }
 
+@Composable
+private fun CollapsedWebPageControls(
+    visible: Boolean,
+    windowCount: Int,
+    onBack: () -> Unit,
+    onOpenWindowPicker: () -> Unit,
+    onClosePage: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var menuExpanded by remember { mutableStateOf(false) }
+    AnimatedVisibility(
+        visible = visible,
+        modifier = modifier,
+        enter = fadeIn(tween(220)) + slideInVertically(tween(220), initialOffsetY = { -it / 2 }),
+        exit = fadeOut(tween(120)),
+    ) {
+        Box {
+            Surface(
+                shape = RoundedCornerShape(50.dp),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.24f),
+                tonalElevation = 0.dp,
+            ) {
+                IconButton(onClick = { menuExpanded = true }) {
+                    Text(
+                        text = "⋮",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f),
+                    )
+                }
+            }
+            DropdownMenu(
+                expanded = menuExpanded,
+                onDismissRequest = { menuExpanded = false },
+            ) {
+                DropdownMenuItem(
+                    text = { Text("返回上一页") },
+                    onClick = {
+                        menuExpanded = false
+                        onBack()
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("切换窗口（$windowCount）") },
+                    onClick = {
+                        menuExpanded = false
+                        onOpenWindowPicker()
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("关闭页面") },
+                    onClick = {
+                        menuExpanded = false
+                        onClosePage()
+                    },
+                )
+            }
+        }
+    }
+}
+
 private const val WEB_LOAD_TIMEOUT_MS = 20_000L
+private const val WEB_PAGE_TOOLBAR_AUTO_HIDE_MS = 900L
 
 @Composable
 private fun WebPageErrorPanel(
@@ -1575,7 +1687,7 @@ private fun WebPageErrorPanel(
             Text("访问地址：${stripUrlUserInfo(error.url).orEmpty()}", style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(20.dp))
             Button(onClick = onRetry) { Text("重试") }
-            TextButton(onClick = onBack) { Text("返回服务列表") }
+            TextButton(onClick = onBack) { Text("关闭页面") }
         }
     }
 }

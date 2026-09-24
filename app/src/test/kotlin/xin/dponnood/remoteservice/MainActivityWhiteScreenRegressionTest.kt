@@ -33,4 +33,22 @@ class MainActivityWhiteScreenRegressionTest {
         assertTrue(source.contains("pageNotice"))
         assertTrue(source.contains("WEB_RENDER_PROCESS_GONE"))
     }
+
+    @Test
+    fun webPageAutoHidesTitleBarAndProvidesCollapsedMenu() {
+        val source = File(
+            "src/main/java/xin/dponnood/remoteservice/MainActivity.kt",
+        ).readText()
+
+        assertTrue(source.contains("WEB_PAGE_TOOLBAR_AUTO_HIDE_MS = 900L"))
+        assertTrue(source.contains("visible = titleBarExpanded"))
+        assertTrue(source.contains("visible = !titleBarExpanded && pageError == null"))
+        assertTrue(source.contains("fun closeCurrentPage()"))
+        assertTrue(source.contains("closeWindow(currentWindow.id)"))
+        assertTrue(source.contains("text = \"⋮\""))
+        assertTrue(source.contains("DropdownMenu("))
+        assertTrue(source.contains("Text(\"返回上一页\")"))
+        assertTrue(source.contains("Text(\"关闭页面\")"))
+        assertTrue(source.contains("\"WEB_PAGE_CLOSED\""))
+    }
 }
