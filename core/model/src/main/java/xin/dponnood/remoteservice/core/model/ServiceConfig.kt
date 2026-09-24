@@ -88,6 +88,8 @@ enum class ServiceType {
     ISTORE,
     /** OpenClash/Mihomo LuCI panel plus its Clash-compatible API. */
     OPENCLASH,
+    /** OpenWrt/iStoreOS Dockerman page and read-only Docker overview. */
+    DOCKER,
 }
 
 /**

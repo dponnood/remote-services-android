@@ -364,7 +364,7 @@ internal class UbusSystemInfoReader(
 }
 
 /** Production HTTP transport. It never writes request details to logs. */
-private class HttpUbusTransport : UbusTransport {
+internal class HttpUbusTransport : UbusTransport {
     override suspend fun post(url: String, cookieHeader: String?, body: String): UbusHttpResponse? =
         withContext(Dispatchers.IO) {
             val connection = runCatching { URL(url).openConnection() as HttpURLConnection }.getOrNull()

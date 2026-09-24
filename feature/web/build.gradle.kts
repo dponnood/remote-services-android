@@ -18,6 +18,7 @@ dependencies {
     implementation(project(":core:model"))
     implementation(project(":core:security"))
     implementation(project(":core:network"))
+    implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.webkit)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

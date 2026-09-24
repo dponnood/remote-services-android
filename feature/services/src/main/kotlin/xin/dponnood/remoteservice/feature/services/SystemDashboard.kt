@@ -56,6 +56,22 @@ enum class DashboardCardId {
     OPENCLASH_GROUPS,
     OPENCLASH_SELECTED_GROUP,
     OPENCLASH_MEMORY,
+    DOCKER_ENGINE,
+    DOCKER_REGISTRY,
+    DOCKER_CONTAINERS,
+    DOCKER_RUNNING,
+    DOCKER_PAUSED,
+    DOCKER_STOPPED,
+    DOCKER_IMAGES,
+    DOCKER_NETWORKS,
+    DOCKER_VOLUMES,
+    DOCKER_HOST_RESOURCES,
+    DOCKER_RUNTIME,
+    DOCKER_STORAGE,
+    DOCKER_CONTAINER_LIST,
+    DOCKER_IMAGE_LIST,
+    DOCKER_NETWORK_LIST,
+    DOCKER_VOLUME_LIST,
 }
 
 enum class DashboardCardStatus {
@@ -99,6 +115,25 @@ data class DashboardCardModel(
             DashboardCardId.STORAGE, DashboardCardId.NETWORK,
         )
 
+        private val dockerIds = listOf(
+            DashboardCardId.DOCKER_ENGINE,
+            DashboardCardId.DOCKER_REGISTRY,
+            DashboardCardId.DOCKER_CONTAINERS,
+            DashboardCardId.DOCKER_RUNNING,
+            DashboardCardId.DOCKER_PAUSED,
+            DashboardCardId.DOCKER_STOPPED,
+            DashboardCardId.DOCKER_IMAGES,
+            DashboardCardId.DOCKER_NETWORKS,
+            DashboardCardId.DOCKER_VOLUMES,
+            DashboardCardId.DOCKER_HOST_RESOURCES,
+            DashboardCardId.DOCKER_RUNTIME,
+            DashboardCardId.DOCKER_STORAGE,
+            DashboardCardId.DOCKER_CONTAINER_LIST,
+            DashboardCardId.DOCKER_IMAGE_LIST,
+            DashboardCardId.DOCKER_NETWORK_LIST,
+            DashboardCardId.DOCKER_VOLUME_LIST,
+        )
+
         private val definitions = mapOf(
             DashboardCardId.CPU to ("处理器占用" to "cpu"),
             DashboardCardId.TEMPERATURE to ("温度" to "temperature"),
@@ -133,6 +168,22 @@ data class DashboardCardModel(
             DashboardCardId.OPENCLASH_GROUPS to ("代理组数量" to "openclash-groups"),
             DashboardCardId.OPENCLASH_SELECTED_GROUP to ("当前代理节点" to "openclash-groups"),
             DashboardCardId.OPENCLASH_MEMORY to ("连接占用内存" to "openclash-memory"),
+            DashboardCardId.DOCKER_ENGINE to ("Docker 引擎" to "container"),
+            DashboardCardId.DOCKER_REGISTRY to ("镜像仓库" to "container"),
+            DashboardCardId.DOCKER_CONTAINERS to ("容器总数" to "container"),
+            DashboardCardId.DOCKER_RUNNING to ("运行中容器" to "container"),
+            DashboardCardId.DOCKER_PAUSED to ("已暂停容器" to "container"),
+            DashboardCardId.DOCKER_STOPPED to ("已停止容器" to "container"),
+            DashboardCardId.DOCKER_IMAGES to ("镜像总数" to "container"),
+            DashboardCardId.DOCKER_NETWORKS to ("网络总数" to "network"),
+            DashboardCardId.DOCKER_VOLUMES to ("卷总数" to "storage"),
+            DashboardCardId.DOCKER_HOST_RESOURCES to ("主机资源" to "memory"),
+            DashboardCardId.DOCKER_RUNTIME to ("运行环境" to "host"),
+            DashboardCardId.DOCKER_STORAGE to ("Docker 数据目录" to "storage"),
+            DashboardCardId.DOCKER_CONTAINER_LIST to ("容器清单" to "container"),
+            DashboardCardId.DOCKER_IMAGE_LIST to ("镜像清单" to "container"),
+            DashboardCardId.DOCKER_NETWORK_LIST to ("网络清单" to "network"),
+            DashboardCardId.DOCKER_VOLUME_LIST to ("数据卷清单" to "storage"),
         )
 
         fun defaultCardOrder(serviceType: ServiceType): List<DashboardCardId> = when (serviceType) {
@@ -144,6 +195,15 @@ data class DashboardCardModel(
                 DashboardCardId.OPENCLASH_CONNECTIONS,
                 DashboardCardId.OPENCLASH_GROUPS,
                 DashboardCardId.OPENCLASH_MEMORY,
+            )
+            ServiceType.DOCKER -> listOf(
+                DashboardCardId.DOCKER_CONTAINERS,
+                DashboardCardId.DOCKER_RUNNING,
+                DashboardCardId.DOCKER_ENGINE,
+                DashboardCardId.DOCKER_IMAGES,
+                DashboardCardId.DOCKER_NETWORKS,
+                DashboardCardId.DOCKER_VOLUMES,
+                DashboardCardId.DOCKER_HOST_RESOURCES,
             )
             else -> listOf(DashboardCardId.HOST, DashboardCardId.MEMORY, DashboardCardId.UPTIME)
         }
@@ -169,19 +229,23 @@ data class DashboardCardModel(
         /** All candidates shown in the repository, including explicitly unsupported metrics. */
         fun catalogue(snapshot: SystemInfoSnapshot?, serviceType: ServiceType): List<DashboardCardCatalogItem> {
             val effectiveSnapshot = snapshot ?: SystemInfoSnapshot()
-            val models = if (serviceType == ServiceType.OPENCLASH) {
-                openClashCards(effectiveSnapshot.openClash ?: OpenClashDashboardSnapshot())
-            } else {
-                systemCards(effectiveSnapshot)
+            val models = when (serviceType) {
+                ServiceType.OPENCLASH -> openClashCards(effectiveSnapshot.openClash ?: OpenClashDashboardSnapshot())
+                ServiceType.DOCKER -> dockerCards(effectiveSnapshot.docker ?: DockerDashboardSnapshot())
+                else -> systemCards(effectiveSnapshot)
             }.associateBy(DashboardCardModel::id)
-            val ids = if (serviceType == ServiceType.OPENCLASH) openClashIds else systemIds
-            val supported = if (serviceType == ServiceType.OPENCLASH) {
-                openClashIds.filterNot { it in setOf(
+            val ids = when (serviceType) {
+                ServiceType.OPENCLASH -> openClashIds
+                ServiceType.DOCKER -> dockerIds
+                else -> systemIds
+            }
+            val supported = when (serviceType) {
+                ServiceType.OPENCLASH -> openClashIds.filterNot { it in setOf(
                     DashboardCardId.CPU, DashboardCardId.TEMPERATURE, DashboardCardId.MEMORY,
                     DashboardCardId.STORAGE, DashboardCardId.NETWORK,
                 ) }.toSet()
-            } else {
-                systemIds.filterNot { it in setOf(
+                ServiceType.DOCKER -> dockerIds.toSet()
+                else -> systemIds.filterNot { it in setOf(
                     DashboardCardId.CPU, DashboardCardId.TEMPERATURE, DashboardCardId.STORAGE,
                     DashboardCardId.NETWORK,
                 ) }.toSet()
@@ -198,6 +262,7 @@ data class DashboardCardModel(
                         else -> "此服务的数据接口暂不支持"
                     }
                     model.status == DashboardCardStatus.READY -> "数据源已返回，可添加到本页"
+                    serviceType == ServiceType.DOCKER -> "Docker 只读信息接口支持；设备未返回字段时显示暂无数据"
                     snapshot == null -> "该类型服务支持此卡片，等待接口返回数据"
                     id == DashboardCardId.OPENCLASH_DOWNLOAD_RATE || id == DashboardCardId.OPENCLASH_UPLOAD_RATE ->
                         "需要连续采样后显示，首个采样周期内可能暂无数据"
@@ -216,7 +281,11 @@ data class DashboardCardModel(
         }
 
         private fun allFrom(snapshot: SystemInfoSnapshot): List<DashboardCardModel> =
-            if (snapshot.openClash == null) systemCards(snapshot) else openClashCards(snapshot.openClash)
+            when {
+                snapshot.docker != null -> dockerCards(snapshot.docker)
+                snapshot.openClash != null -> openClashCards(snapshot.openClash)
+                else -> systemCards(snapshot)
+            }
 
         private fun systemCards(snapshot: SystemInfoSnapshot): List<DashboardCardModel> = listOf(
             model(DashboardCardId.CPU, snapshot.cpuUsagePercent != null,
@@ -304,6 +373,73 @@ data class DashboardCardModel(
             model(DashboardCardId.OPENCLASH_MEMORY, snapshot.memoryBytes != null,
                 snapshot.memoryBytes?.let(::formatBytes) ?: "暂无数据", "Mihomo 当前连接内存"),
         )
+
+        private fun dockerCards(snapshot: DockerDashboardSnapshot): List<DashboardCardModel> = listOf(
+            model(DashboardCardId.DOCKER_ENGINE, !snapshot.serverVersion.isNullOrBlank(),
+                snapshot.serverVersion ?: "暂无数据",
+                listOfNotNull(snapshot.apiVersion?.let { "API $it" }, snapshot.storageDriver).joinToString(" · ").ifBlank { "Docker Engine 服务端版本" }),
+            model(DashboardCardId.DOCKER_REGISTRY,
+                !snapshot.indexServerAddress.isNullOrBlank() || !snapshot.registryMirrors.isNullOrBlank(),
+                snapshot.indexServerAddress ?: "暂无数据",
+                snapshot.registryMirrors?.let { "镜像加速：$it" } ?: "Docker 镜像索引地址"),
+            model(DashboardCardId.DOCKER_CONTAINERS, snapshot.containersTotal != null,
+                snapshot.containersTotal?.let { "$it 个" } ?: "暂无数据", "容器总数"),
+            model(DashboardCardId.DOCKER_RUNNING, snapshot.containersRunning != null,
+                snapshot.containersRunning?.let { "$it 个" } ?: "暂无数据", "运行中的容器"),
+            model(DashboardCardId.DOCKER_PAUSED, snapshot.containersPaused != null,
+                snapshot.containersPaused?.let { "$it 个" } ?: "暂无数据",
+                if (snapshot.containersPaused != null) "已暂停的容器" else "当前 Dockerman 概览页未返回暂停数"),
+            model(DashboardCardId.DOCKER_STOPPED, snapshot.containersStopped != null,
+                snapshot.containersStopped?.let { "$it 个" } ?: "暂无数据",
+                if (snapshot.containersStopped != null) "已停止的容器" else "当前 Dockerman 概览页未返回停止数"),
+            model(DashboardCardId.DOCKER_IMAGES, snapshot.imagesTotal != null,
+                snapshot.imagesTotal?.let { "$it 个" } ?: "暂无数据",
+                snapshot.imagesUsed?.let { "$it 个镜像正在被容器使用 · 本地镜像总数" } ?: "本地镜像总数"),
+            model(DashboardCardId.DOCKER_NETWORKS, snapshot.networksTotal != null,
+                snapshot.networksTotal?.let { "$it 个" } ?: "暂无数据", "Docker 网络总数"),
+            model(DashboardCardId.DOCKER_VOLUMES, snapshot.volumesTotal != null,
+                snapshot.volumesTotal?.let { "$it 个" } ?: "暂无数据", "Docker 卷总数"),
+            model(DashboardCardId.DOCKER_HOST_RESOURCES,
+                snapshot.cpuCount != null || snapshot.memoryTotalBytes != null,
+                listOfNotNull(snapshot.cpuCount?.let { "$it 核" }, snapshot.memoryTotalBytes?.let(::formatBytes))
+                    .joinToString(" · ").ifBlank { "暂无数据" },
+                "Docker 宿主机 CPU / 内存总量"),
+            model(DashboardCardId.DOCKER_RUNTIME,
+                !snapshot.operatingSystem.isNullOrBlank() || !snapshot.kernelVersion.isNullOrBlank(),
+                snapshot.operatingSystem ?: snapshot.kernelVersion ?: "暂无数据",
+                snapshot.kernelVersion?.takeIf { !snapshot.operatingSystem.isNullOrBlank() }
+                    ?.let { "内核 $it" } ?: "Docker 宿主机运行环境"),
+            model(DashboardCardId.DOCKER_STORAGE, !snapshot.dockerRootDirectory.isNullOrBlank(),
+                snapshot.dockerRootDirectory ?: "暂无数据",
+                snapshot.dockerRootAvailable?.let { "Docker 根目录 · 可用 $it" }
+                    ?: "Docker 数据根目录；未调用耗时的 system/df"),
+            resourceListModel(DashboardCardId.DOCKER_CONTAINER_LIST, snapshot.containerList, "容器"),
+            resourceListModel(DashboardCardId.DOCKER_IMAGE_LIST, snapshot.imageList, "镜像"),
+            resourceListModel(DashboardCardId.DOCKER_NETWORK_LIST, snapshot.networkList, "网络"),
+            resourceListModel(DashboardCardId.DOCKER_VOLUME_LIST, snapshot.volumeList, "数据卷"),
+        )
+
+        private fun resourceListModel(
+            id: DashboardCardId,
+            entries: List<DockerResourceSummary>?,
+            label: String,
+        ): DashboardCardModel {
+            val summary = entries?.take(4).orEmpty().joinToString(" · ") { entry ->
+                listOfNotNull(entry.name, entry.detail).joinToString("：")
+            }
+            val more = (entries?.size ?: 0) - 4
+            val detail = when {
+                entries == null -> "当前 Dockerman 概览页不提供${label}清单数据"
+                entries.isEmpty() -> "没有 $label"
+                else -> summary + if (more > 0) " 等 ${entries.size} 项" else ""
+            }
+            return model(
+                id = id,
+                available = entries != null,
+                value = entries?.let { "${it.size} 项" } ?: "暂无数据",
+                detail = detail,
+            )
+        }
 
         private fun model(
             id: DashboardCardId,
@@ -406,6 +542,39 @@ data class OpenClashDashboardSnapshot(
     val uploadTotalBytes: Long? = null,
 )
 
+/** Read-only fields exposed by the authenticated Dockerman overview page. */
+data class DockerDashboardSnapshot(
+    val serverVersion: String? = null,
+    val apiVersion: String? = null,
+    val storageDriver: String? = null,
+    val indexServerAddress: String? = null,
+    val registryMirrors: String? = null,
+    val dockerRootDirectory: String? = null,
+    val dockerRootAvailable: String? = null,
+    val operatingSystem: String? = null,
+    val kernelVersion: String? = null,
+    val cpuCount: Int? = null,
+    val memoryTotalBytes: Long? = null,
+    val containersTotal: Int? = null,
+    val containersRunning: Int? = null,
+    val containersPaused: Int? = null,
+    val containersStopped: Int? = null,
+    val imagesTotal: Int? = null,
+    val imagesUsed: Int? = null,
+    val networksTotal: Int? = null,
+    val volumesTotal: Int? = null,
+    val containerList: List<DockerResourceSummary>? = null,
+    val imageList: List<DockerResourceSummary>? = null,
+    val networkList: List<DockerResourceSummary>? = null,
+    val volumeList: List<DockerResourceSummary>? = null,
+)
+
+/** Small read-only row summary; intentionally excludes IDs, labels and config. */
+data class DockerResourceSummary(
+    val name: String,
+    val detail: String? = null,
+)
+
 /** A Selector group and its current candidate nodes, supplied by Mihomo `/proxies`. */
 data class OpenClashProxyGroup(
     val name: String,
@@ -430,6 +599,7 @@ data class SystemInfoSnapshot(
     val rxBytesPerSecond: Long? = null,
     val txBytesPerSecond: Long? = null,
     val openClash: OpenClashDashboardSnapshot? = null,
+    val docker: DockerDashboardSnapshot? = null,
     val memoryFreeBytes: Long? = null,
     val memorySharedBytes: Long? = null,
     val memoryBufferedBytes: Long? = null,

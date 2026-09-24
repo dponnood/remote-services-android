@@ -217,6 +217,9 @@ enum class NetworkErrorCode {
 
 interface HealthProbe {
     suspend fun probe(url: String, path: String = "/"): HealthProbeResult
+
+    /** Read-only GET variant for router pages that reject or mis-handle HEAD. */
+    suspend fun probeGet(url: String, path: String = "/"): HealthProbeResult = probe(url, path)
 }
 
 /**
@@ -234,7 +237,17 @@ class HttpsHealthProbe(
     private val connectTimeoutMs: Int = 3_000,
     private val readTimeoutMs: Int = 3_000,
 ) : HealthProbe {
-    override suspend fun probe(url: String, path: String): HealthProbeResult = withContext(Dispatchers.IO) {
+    override suspend fun probe(url: String, path: String): HealthProbeResult =
+        probeInternal(url, path, useGetOnly = false)
+
+    override suspend fun probeGet(url: String, path: String): HealthProbeResult =
+        probeInternal(url, path, useGetOnly = true)
+
+    private suspend fun probeInternal(
+        url: String,
+        path: String,
+        useGetOnly: Boolean,
+    ): HealthProbeResult = withContext(Dispatchers.IO) {
         val started = System.nanoTime()
         val parsedUri = runCatching { URI(url.trim()) }.getOrNull()
             ?: return@withContext HealthProbeResult(false, errorCode = NetworkErrorCode.INVALID_ENDPOINT)
@@ -272,7 +285,7 @@ class HttpsHealthProbe(
             return candidate
         }
 
-        var connection = openConnection("HEAD")
+        var connection = openConnection(if (useGetOnly) "GET" else "HEAD")
             ?: return@withContext HealthProbeResult(false, errorCode = NetworkErrorCode.INVALID_ENDPOINT)
         try {
             var status = connection.responseCode
@@ -280,7 +293,7 @@ class HttpsHealthProbe(
             // same URL works with a normal browser GET. Retry only the two
             // standard "method unsupported" responses; all other failures
             // retain the existing strict probe semantics.
-            if (shouldRetryHealthProbeWithGet(status)) {
+            if (!useGetOnly && shouldRetryHealthProbeWithGet(status)) {
                 connection.disconnect()
                 connection = openConnection("GET")
                     ?: return@withContext HealthProbeResult(false, errorCode = NetworkErrorCode.INVALID_ENDPOINT)
@@ -354,7 +367,8 @@ internal fun HealthProbeResult.acceptForRoute(serviceType: ServiceType): HealthP
         reachable ||
         serviceType != ServiceType.LUCI &&
         serviceType != ServiceType.ISTORE &&
-        serviceType != ServiceType.OPENCLASH
+        serviceType != ServiceType.OPENCLASH &&
+        serviceType != ServiceType.DOCKER
     ) return this
     if (!isAuthenticationRequiredStatus(statusCode)) return this
     return copy(reachable = true, errorCode = null)
@@ -435,7 +449,11 @@ class RouteResolver(
         var lastError = NetworkErrorCode.IO_FAILURE
         candidates.forEachIndexed { index, endpoint ->
             attempted += endpoint
-            val probe = healthProbe.probe(endpoint.url, config.probePath)
+            val probe = if (config.serviceType == ServiceType.DOCKER) {
+                healthProbe.probeGet(endpoint.url, config.probePath)
+            } else {
+                healthProbe.probe(endpoint.url, config.probePath)
+            }
             val routeProbe = probe.acceptForRoute(config.serviceType)
             if (routeProbe.reachable) {
                 return RouteResolutionResult.Success(

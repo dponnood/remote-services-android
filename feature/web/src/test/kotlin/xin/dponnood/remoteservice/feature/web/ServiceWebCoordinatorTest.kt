@@ -9,10 +9,123 @@ import xin.dponnood.remoteservice.core.model.ServiceType
 import xin.dponnood.remoteservice.core.network.HealthProbe
 import xin.dponnood.remoteservice.core.network.HealthProbeResult
 import xin.dponnood.remoteservice.core.network.RouteResolver
+import xin.dponnood.remoteservice.core.network.RouteKind
 import xin.dponnood.remoteservice.core.network.SsidPermissionState
 import xin.dponnood.remoteservice.core.network.SsidProvider
 
 class ServiceWebCoordinatorTest {
+    @Test
+    fun dockerServiceUsesGetOnlyRouteHealthAndAppendsDetectedDockermanPath() = runTest {
+        var getProbes = 0
+        var headProbes = 0
+        var cookieLookups = 0
+        var observedCookie: String? = null
+        val routeResolver = RouteResolver(
+            object : SsidProvider {
+                override fun currentSsid() = "Home"
+                override fun permissionState() = SsidPermissionState.AVAILABLE
+            },
+            object : HealthProbe {
+                override suspend fun probe(url: String, path: String): HealthProbeResult {
+                    headProbes++
+                    return HealthProbeResult(reachable = true, statusCode = 200)
+                }
+
+                override suspend fun probeGet(url: String, path: String): HealthProbeResult {
+                    getProbes++
+                    return HealthProbeResult(reachable = true, statusCode = 200)
+                }
+            },
+        )
+        val pageResolver = DockerPageRouteResolver(
+            probe = DockerPageProbe { _, cookie ->
+                observedCookie = cookie
+                DockerPageProbeResult(DockerPageProbeStatus.DOCKER_PAGE)
+            },
+            cookieProvider = LuCiCookieProvider { url ->
+                cookieLookups++
+                assertTrue(url.contains("/cgi-bin/luci/admin/services/dockerman/overview"))
+                "fixture-cookie"
+            },
+        )
+        val service = ServiceConfig(
+            id = "docker",
+            displayName = "iStore Docker",
+            lanUrl = "http://192.0.2.1/cgi-bin/luci",
+            trustedSsids = setOf("Home"),
+            serviceType = ServiceType.DOCKER,
+        )
+
+        val result = ServiceWebCoordinator(routeResolver, pageResolver).resolve(service)
+
+        val ready = result as ServiceWebOpenResult.Ready
+        assertEquals(RouteKind.INTERNAL, ready.resolution.endpoint.kind)
+        assertEquals(
+            "http://192.0.2.1${DockerPageRouteResolver.CANDIDATE_PATHS.first()}",
+            ready.target.url,
+        )
+        assertEquals("fixture-cookie", observedCookie)
+        assertEquals(1, cookieLookups)
+        assertEquals(1, getProbes)
+        assertEquals(0, headProbes)
+    }
+
+    @Test
+    fun dockerAuthResponseIsUnverifiedFallbackAndLoginPageIsNotAcceptedAsDocker() = runTest {
+        val service = ServiceConfig(
+            id = "docker",
+            displayName = "iStore Docker",
+            wanUrl = "https://router.example",
+            serviceType = ServiceType.DOCKER,
+        )
+        val routeResolver = RouteResolver(
+            object : SsidProvider {
+                override fun currentSsid() = null
+                override fun permissionState() = SsidPermissionState.DENIED
+            },
+            object : HealthProbe {
+                override suspend fun probe(url: String, path: String) = HealthProbeResult(true, 200)
+            },
+        )
+        val pageResolver = DockerPageRouteResolver(
+            probe = DockerPageProbe { _, _ -> DockerPageProbeResult(DockerPageProbeStatus.LOGIN_REQUIRED) },
+            cookieProvider = LuCiCookieProvider { null },
+        )
+
+        val result = ServiceWebCoordinator(routeResolver, pageResolver).resolve(service)
+
+        val ready = result as ServiceWebOpenResult.Ready
+        assertEquals("https://router.example${DockerPageRouteResolver.CANDIDATE_PATHS.first()}", ready.target.url)
+    }
+
+    @Test
+    fun dockerRoutesAreNotAssumedWhenBothCandidatesReturn404() = runTest {
+        val service = ServiceConfig(
+            id = "docker",
+            displayName = "iStore Docker",
+            wanUrl = "https://router.example",
+            serviceType = ServiceType.DOCKER,
+        )
+        val routeResolver = RouteResolver(
+            object : SsidProvider {
+                override fun currentSsid() = null
+                override fun permissionState() = SsidPermissionState.DENIED
+            },
+            object : HealthProbe {
+                override suspend fun probe(url: String, path: String) = HealthProbeResult(true, 200)
+            },
+        )
+        val pageResolver = DockerPageRouteResolver(
+            probe = DockerPageProbe { _, _ -> DockerPageProbeResult(DockerPageProbeStatus.NOT_FOUND) },
+            cookieProvider = LuCiCookieProvider { null },
+        )
+
+        val result = ServiceWebCoordinator(routeResolver, pageResolver).resolve(service)
+
+        assertTrue(result is ServiceWebOpenResult.Unavailable)
+        assertEquals(2, (result as ServiceWebOpenResult.Unavailable).attempted.size)
+    }
+
     @Test
     fun buildsExactOriginTargetAfterRouteResolution() = runTest {
         val service = ServiceConfig(

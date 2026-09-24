@@ -27,11 +27,12 @@ internal class IStoreSystemInfoProvider(
     private val sessionManager: IStoreSystemInfoSessionAccess? = null,
     private val logRepository: LogRepository? = null,
     private val reader: UbusSystemInfoReader = UbusSystemInfoReader(),
+    private val dockerReader: DockerSystemInfoReader = DockerSystemInfoReader(),
 ) : SystemInfoProvider {
     override suspend fun load(service: ServiceConfig?): SystemInfoResult {
         if (service == null) return SystemInfoResult.Unavailable("请先添加 iStoreOS 或 LuCI 服务")
-        if (service.serviceType != ServiceType.ISTORE && service.serviceType != ServiceType.LUCI) {
-            return SystemInfoResult.Unavailable("当前服务不是 iStoreOS/LuCI 类型")
+        if (service.serviceType !in setOf(ServiceType.ISTORE, ServiceType.LUCI, ServiceType.DOCKER)) {
+            return SystemInfoResult.Unavailable("当前服务不是 iStoreOS/LuCI/Docker 类型")
         }
 
         val resolved = when (val result = routeResolver.resolve(service.toRouteConfig())) {
@@ -142,19 +143,113 @@ internal class IStoreSystemInfoProvider(
             )
         }
 
-        val readResult = reader.read(origin, UbusSessionAuth(sid, cookie)) {
-            val manager = sessionManager ?: return@read null
+        val refreshSession: suspend () -> UbusSessionAuth? = refresh@{
+            val manager = sessionManager ?: return@refresh null
             logRepository?.append(
                 LogLevel.WARN,
                 "ISTORE_SESSION_REFRESH",
-                "LuCI ubus 会话失效或被拒绝，尝试重新登录一次",
+                "LuCI 会话失效，尝试重新登录一次",
                 context = mapOf("service_id" to service.id, "route" to resolved.endpoint.kind.name),
             )
             sessionResult = manager.forceReauthenticate(service, resolved)
             val refreshed = (sessionResult as? IStoreSessionResult.Authenticated)?.session
-                ?: return@read null
+                ?: return@refresh null
             UbusSessionAuth(refreshed.sessionId, refreshed.cookieHeader)
         }
+        if (service.serviceType == ServiceType.DOCKER) {
+            return when (
+                val dockerResult = dockerReader.read(
+                    origin = origin,
+                    session = UbusSessionAuth(sid, cookie),
+                    cacheScope = service.id,
+                    reauthenticate = refreshSession,
+                )
+            ) {
+                is DockerOverviewReadResult.Success -> {
+                    if (!hasAnyMetric(dockerResult.snapshot)) {
+                        return unavailable(
+                            service,
+                            "Docker 概览响应有效，但没有可用的只读概览字段",
+                            "DOCKER_OVERVIEW_NO_DATA",
+                            emptyList(),
+                        )
+                    }
+                    logRepository?.append(
+                        LogLevel.INFO,
+                        "DOCKER_OVERVIEW_READ",
+                        "已从受 LuCI 会话保护的 Docker 概览页读取数据",
+                        context = mapOf(
+                            "service_id" to service.id,
+                            "route" to resolved.endpoint.kind.name,
+                            "session_refreshed" to dockerResult.sessionRefreshed.toString(),
+                            "cache_hit" to dockerResult.cached.toString(),
+                        ),
+                    )
+                    SystemInfoResult.Success(dockerResult.snapshot)
+                }
+                is DockerOverviewReadResult.Failure -> {
+                    val (event, message, userMessage) = when (dockerResult.kind) {
+                        DockerOverviewFailureKind.NO_SESSION -> Triple(
+                            "DOCKER_OVERVIEW_NO_SESSION",
+                            "Docker 概览读取缺少 LuCI Cookie",
+                            "请先在网页端登录后再读取 Docker 信息",
+                        )
+                        DockerOverviewFailureKind.SESSION_EXPIRED -> Triple(
+                            "DOCKER_OVERVIEW_SESSION_EXPIRED",
+                            "Docker 概览页仍要求 LuCI 登录",
+                            sessionFailureMessage(sessionResult),
+                        )
+                        DockerOverviewFailureKind.FORBIDDEN -> Triple(
+                            "DOCKER_OVERVIEW_FORBIDDEN",
+                            "Docker 概览页拒绝当前 LuCI 会话；不会通过反复重新登录绕过权限",
+                            "当前 LuCI 账号无权读取 Docker 概览（HTTP 403）",
+                        )
+                        DockerOverviewFailureKind.NOT_FOUND -> Triple(
+                            "DOCKER_OVERVIEW_NOT_FOUND",
+                            "未找到受支持的 Docker 概览页面",
+                            "未找到 Docker 概览页，请确认填写的是 iStoreOS/LuCI 基地址",
+                        )
+                        DockerOverviewFailureKind.NOT_DOCKER_PAGE -> Triple(
+                            "DOCKER_OVERVIEW_UNSUPPORTED",
+                            "Docker 页面没有提供可识别的服务端只读概览数据",
+                            "已打开 Docker 页面，但当前版本未提供可安全读取的原生概览数据",
+                        )
+                        DockerOverviewFailureKind.DAEMON_UNAVAILABLE -> Triple(
+                            "DOCKER_DAEMON_UNAVAILABLE",
+                            "Dockerman 概览页报告 Docker daemon 不可用",
+                            "Docker 服务当前不可用，请检查路由器上的 Docker daemon",
+                        )
+                        DockerOverviewFailureKind.INVALID_RESPONSE -> Triple(
+                            "DOCKER_OVERVIEW_INVALID_RESPONSE",
+                            "Docker 概览页响应不是受支持的 LuCI 页面",
+                            "Docker 概览响应格式不受支持",
+                        )
+                        DockerOverviewFailureKind.ENDPOINT_UNAVAILABLE -> Triple(
+                            "DOCKER_OVERVIEW_ENDPOINT_UNAVAILABLE",
+                            "Docker 概览页暂时不可访问",
+                            "Docker 概览页暂时不可访问",
+                        )
+                    }
+                    logRepository?.append(
+                        LogLevel.WARN,
+                        event,
+                        message,
+                        context = buildMap {
+                            put("service_id", service.id)
+                            put("route", resolved.endpoint.kind.name)
+                            dockerResult.httpStatus?.let { put("http_status", it.toString()) }
+                        },
+                    )
+                    SystemInfoResult.Unavailable(userMessage)
+                }
+            }
+        }
+
+        val readResult = reader.read(
+            origin = origin,
+            session = UbusSessionAuth(sid, cookie),
+            reauthenticate = refreshSession,
+        )
 
         when (readResult) {
             is UbusReadResult.Success -> {
@@ -166,7 +261,8 @@ internal class IStoreSystemInfoProvider(
                         if (permissionDenied) "标准 ubus 读取被 ACL 拒绝" else "标准 ubus 返回业务错误",
                         context = buildMap {
                             put("service_id", service.id)
-                            put("method", "system.${issue.method}")
+                            val namespace = if (service.serviceType == ServiceType.DOCKER) "docker" else "system"
+                            put("method", "$namespace.${issue.method}")
                             put("ubus_code", issue.code.toString())
                             issue.rpcErrorCode?.let { put("rpc_error_code", it.toString()) }
                             put("session_refreshed", readResult.sessionRefreshed.toString())
@@ -319,6 +415,6 @@ internal class IStoreSystemInfoProvider(
         private fun hasAnyMetric(snapshot: SystemInfoSnapshot): Boolean =
             snapshot.hostname != null || snapshot.model != null || snapshot.osName != null ||
                 snapshot.firmware != null || snapshot.kernel != null || snapshot.memoryTotalBytes != null ||
-                snapshot.uptimeMillis != null
+                snapshot.uptimeMillis != null || snapshot.docker != null
     }
 }

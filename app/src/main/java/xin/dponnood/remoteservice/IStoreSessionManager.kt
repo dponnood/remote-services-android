@@ -12,9 +12,12 @@ import java.nio.charset.StandardCharsets
 import java.util.LinkedHashMap
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.coroutines.resume
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import xin.dponnood.remoteservice.core.logging.LogLevel
 import xin.dponnood.remoteservice.core.logging.LogRepository
@@ -128,7 +131,8 @@ class IStoreSessionManager(
         if (
             service.serviceType != ServiceType.ISTORE &&
             service.serviceType != ServiceType.LUCI &&
-            service.serviceType != ServiceType.OPENCLASH
+            service.serviceType != ServiceType.OPENCLASH &&
+            service.serviceType != ServiceType.DOCKER
         ) {
             return IStoreSessionResult.MissingCredentials("当前服务不是 LuCI/iStore/OpenClash 服务")
         }
@@ -323,8 +327,31 @@ class IStoreSessionManager(
     private suspend fun writeCookies(origin: String, cookies: List<String>) {
         if (cookies.isEmpty()) return
         withContext(Dispatchers.Main.immediate) {
-            cookies.forEach { cookie -> runCatching { cookieManager.setCookie(origin, cookie) } }
+            val allAcknowledged = withTimeoutOrNull(COOKIE_WRITE_TIMEOUT_MILLIS) {
+                cookies.forEach { cookie ->
+                    suspendCancellableCoroutine<Unit> { continuation ->
+                        runCatching {
+                            // Wait for WebView's cookie store to acknowledge the
+                            // write before native readers or the page resolver
+                            // query a path-scoped LuCI session cookie.
+                            cookieManager.setCookie("$origin/cgi-bin/luci/", cookie) {
+                                if (continuation.isActive) continuation.resume(Unit)
+                            }
+                        }.onFailure {
+                            if (continuation.isActive) continuation.resume(Unit)
+                        }
+                    }
+                }
+                true
+            }
             runCatching { cookieManager.flush() }
+            if (allAcknowledged != true) {
+                logRepository?.append(
+                    LogLevel.WARN,
+                    "ISTORE_COOKIE_WRITE_TIMEOUT",
+                    "等待 LuCI CookieManager 确认超时；继续使用本次登录响应",
+                )
+            }
         }
     }
 
@@ -346,6 +373,7 @@ class IStoreSessionManager(
     companion object {
         private const val DEFAULT_ROUTE_KEY = "default"
         private const val RETRY_COOLDOWN_MILLIS = 15_000L
+        private const val COOKIE_WRITE_TIMEOUT_MILLIS = 3_000L
         private val SESSION_ID_PATTERN = Regex("^[0-9a-fA-F]{32}$")
         private val SESSION_COOKIE_NAMES = listOf("sysauth", "sysauth_http", "sysauth_https")
         private val SESSION_COOKIE_PATHS = listOf(

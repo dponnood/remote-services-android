@@ -63,6 +63,9 @@ import androidx.compose.material.icons.outlined.Lan
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Memory
+import androidx.compose.material.icons.outlined.Pause
+import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material.icons.outlined.Photo
 import androidx.compose.material.icons.outlined.Refresh
@@ -70,6 +73,7 @@ import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material.icons.outlined.Storage
+import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -726,10 +730,11 @@ private fun serviceTypeLabel(type: ServiceType): String = when (type) {
     ServiceType.LUCI -> "路由器 LuCI"
     ServiceType.ISTORE -> "iStoreOS"
     ServiceType.OPENCLASH -> "OpenClash / Zashboard"
+    ServiceType.DOCKER -> "Docker 容器"
 }
 
 private fun ServiceType.usesSystemDashboard(): Boolean = when (this) {
-    ServiceType.ISTORE, ServiceType.LUCI, ServiceType.OPENCLASH -> true
+    ServiceType.ISTORE, ServiceType.LUCI, ServiceType.OPENCLASH, ServiceType.DOCKER -> true
     ServiceType.GENERIC, ServiceType.NAS -> false
 }
 
@@ -958,6 +963,7 @@ private fun DashboardSection(
                         ServiceType.OPENCLASH -> "OpenClash 状态概览"
                         ServiceType.ISTORE -> "iStoreOS 系统概览"
                         ServiceType.LUCI -> "LuCI 系统概览"
+                        ServiceType.DOCKER -> "Docker 容器概览"
                         else -> "系统概览"
                     },
                     style = MaterialTheme.typography.titleLarge,
@@ -995,7 +1001,11 @@ private fun DashboardSection(
             ) {
                 Icon(Icons.Outlined.Lan, contentDescription = null)
                 Spacer(Modifier.width(4.dp))
-                Text(if (service.serviceType == ServiceType.OPENCLASH) "打开 Zashboard" else "打开网页")
+                Text(when (service.serviceType) {
+                    ServiceType.OPENCLASH -> "打开 Zashboard"
+                    ServiceType.DOCKER -> "打开 Docker 管理"
+                    else -> "打开网页"
+                })
             }
             ServiceActionsMenu(service, onEdit = onEdit, onDelete = onDelete)
             if (!editingCards) {
@@ -2295,6 +2305,22 @@ private fun dashboardIcon(id: DashboardCardId): ImageVector = when (id) {
     DashboardCardId.OPENCLASH_GROUPS -> Icons.Outlined.Lan
     DashboardCardId.OPENCLASH_SELECTED_GROUP -> Icons.Outlined.Lan
     DashboardCardId.OPENCLASH_MEMORY -> Icons.Outlined.Lan
+    DashboardCardId.DOCKER_ENGINE -> Icons.Outlined.Dns
+    DashboardCardId.DOCKER_REGISTRY -> Icons.Outlined.Language
+    DashboardCardId.DOCKER_CONTAINERS -> Icons.Outlined.Dns
+    DashboardCardId.DOCKER_RUNNING -> Icons.Outlined.PlayArrow
+    DashboardCardId.DOCKER_PAUSED -> Icons.Outlined.Pause
+    DashboardCardId.DOCKER_STOPPED -> Icons.Outlined.Stop
+    DashboardCardId.DOCKER_IMAGES -> Icons.Outlined.Dns
+    DashboardCardId.DOCKER_NETWORKS -> Icons.Outlined.Lan
+    DashboardCardId.DOCKER_VOLUMES -> Icons.Outlined.Storage
+    DashboardCardId.DOCKER_HOST_RESOURCES -> Icons.Outlined.Memory
+    DashboardCardId.DOCKER_RUNTIME -> Icons.Outlined.Info
+    DashboardCardId.DOCKER_STORAGE -> Icons.Outlined.Storage
+    DashboardCardId.DOCKER_CONTAINER_LIST -> Icons.Outlined.Dns
+    DashboardCardId.DOCKER_IMAGE_LIST -> Icons.Outlined.Dns
+    DashboardCardId.DOCKER_NETWORK_LIST -> Icons.Outlined.Lan
+    DashboardCardId.DOCKER_VOLUME_LIST -> Icons.Outlined.Storage
 }
 
 private fun dashboardStatusLabel(status: DashboardCardStatus): String = when (status) {

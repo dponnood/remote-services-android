@@ -1,6 +1,7 @@
 package xin.dponnood.remoteservice.feature.web
 
 import xin.dponnood.remoteservice.core.model.ServiceConfig
+import xin.dponnood.remoteservice.core.model.ServiceType
 import xin.dponnood.remoteservice.core.network.RouteEndpoint
 import xin.dponnood.remoteservice.core.network.RouteResolution
 import xin.dponnood.remoteservice.core.network.RouteResolutionResult
@@ -28,6 +29,7 @@ sealed interface ServiceWebOpenResult {
  */
 class ServiceWebCoordinator(
     private val routeResolver: RouteResolver,
+    private val dockerPageRouteResolver: DockerPageRouteResolver = DockerPageRouteResolver(),
 ) {
     suspend fun resolve(
         service: ServiceConfig,
@@ -36,7 +38,39 @@ class ServiceWebCoordinator(
     ): ServiceWebOpenResult {
         return when (val result = routeResolver.resolve(service.toRouteConfig(trustedSsids, probePath))) {
             is RouteResolutionResult.Success -> {
-                val endpoint = result.value.endpoint
+                val baseEndpoint = result.value.endpoint
+                val baseOrigin = webOrigin(baseEndpoint.url)
+                val dockerResolution = if (service.serviceType == ServiceType.DOCKER && baseOrigin != null) {
+                    dockerPageRouteResolver.resolve(baseOrigin)
+                } else {
+                    null
+                }
+                if (dockerResolution is DockerPageRouteResolution.NotFound) {
+                    val attempted = dockerResolution.attempts.map { attempt ->
+                        RouteEndpoint(baseEndpoint.kind, baseOrigin + attempt.path)
+                    }
+                    return ServiceWebOpenResult.Unavailable(
+                        attempted = attempted,
+                        message = if (dockerResolution.attempts.all {
+                                it.status == DockerPageProbeStatus.NOT_FOUND
+                            }
+                        ) {
+                            "未找到 Docker 管理页面；请确认 iStoreOS 已安装 Dockerman"
+                        } else {
+                            "Docker 路由未能确认；候选页只返回普通 LuCI 页面，请检查 Dockerman 版本和登录状态"
+                        },
+                    )
+                }
+                val endpoint = if (dockerResolution != null && baseOrigin != null) {
+                    val path = when (dockerResolution) {
+                        is DockerPageRouteResolution.Confirmed -> dockerResolution.path
+                        is DockerPageRouteResolution.UnverifiedFallback -> dockerResolution.path
+                        is DockerPageRouteResolution.NotFound -> error("Handled above")
+                    }
+                    baseEndpoint.copy(url = baseOrigin + path)
+                } else {
+                    baseEndpoint
+                }
                 val origin = webOrigin(endpoint.url)
                 if (origin == null) {
                     ServiceWebOpenResult.Unavailable(

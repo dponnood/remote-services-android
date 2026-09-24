@@ -476,7 +476,8 @@ class MainActivity : ComponentActivity() {
                     .filter {
                         it.serviceType == ServiceType.ISTORE ||
                             it.serviceType == ServiceType.LUCI ||
-                            it.serviceType == ServiceType.OPENCLASH
+                            it.serviceType == ServiceType.OPENCLASH ||
+                            it.serviceType == ServiceType.DOCKER
                     }
                     .forEach { service ->
                         launch {
@@ -600,7 +601,8 @@ class MainActivity : ComponentActivity() {
             if (
                 service.serviceType == ServiceType.ISTORE ||
                 service.serviceType == ServiceType.LUCI ||
-                service.serviceType == ServiceType.OPENCLASH
+                service.serviceType == ServiceType.OPENCLASH ||
+                service.serviceType == ServiceType.DOCKER
             ) {
                 // Warm the shared session before creating the visible WebView.
                 // A failure is intentionally non-blocking: the page can still

@@ -170,6 +170,52 @@ class SystemDashboardTest {
     }
 
     @Test
+    fun dockerSnapshotRendersRuntimeCountsAndOptionalResourceListCards() {
+        val snapshot = DockerDashboardSnapshot(
+            serverVersion = "26.1.2",
+            apiVersion = "1.45",
+            storageDriver = "overlay2",
+            indexServerAddress = "https://index.docker.io/v1/",
+            registryMirrors = "https://mirror.example",
+            dockerRootDirectory = "/opt/docker",
+            operatingSystem = "OpenWrt",
+            kernelVersion = "6.6.80",
+            cpuCount = 4,
+            memoryTotalBytes = 2_147_483_648L,
+            containersTotal = 3,
+            containersRunning = 1,
+            containersPaused = 1,
+            containersStopped = 1,
+            imagesTotal = 5,
+            imagesUsed = 2,
+            networksTotal = 2,
+            volumesTotal = 1,
+            containerList = listOf(DockerResourceSummary("proxy", "running · alpine")),
+            imageList = listOf(DockerResourceSummary("alpine:latest")),
+            networkList = listOf(DockerResourceSummary("bridge", "bridge")),
+            volumeList = listOf(DockerResourceSummary("config", "local")),
+        )
+        val cards = DashboardCardModel.from(SystemInfoSnapshot(docker = snapshot)).associateBy { it.id }
+        val catalogue = DashboardCardModel.catalogue(SystemInfoSnapshot(docker = snapshot), ServiceType.DOCKER)
+            .associateBy { it.model.id }
+
+        assertEquals("26.1.2", cards.getValue(DashboardCardId.DOCKER_ENGINE).value)
+        assertEquals("1.45", cards.getValue(DashboardCardId.DOCKER_ENGINE).detail?.substringAfter("API ")?.substringBefore(" · "))
+        assertEquals("1 个", cards.getValue(DashboardCardId.DOCKER_RUNNING).value)
+        assertEquals("5 个", cards.getValue(DashboardCardId.DOCKER_IMAGES).value)
+        assertTrue(cards.getValue(DashboardCardId.DOCKER_IMAGES).detail!!.contains("2 个镜像正在被容器使用"))
+        assertEquals("https://index.docker.io/v1/", cards.getValue(DashboardCardId.DOCKER_REGISTRY).value)
+        assertTrue(cards.getValue(DashboardCardId.DOCKER_REGISTRY).detail!!.contains("https://mirror.example"))
+        assertTrue(cards.getValue(DashboardCardId.DOCKER_CONTAINER_LIST).detail!!.contains("proxy"))
+        assertTrue(catalogue.getValue(DashboardCardId.DOCKER_CONTAINER_LIST).addable)
+        assertTrue(catalogue.getValue(DashboardCardId.DOCKER_IMAGE_LIST).addable)
+        assertTrue(catalogue.getValue(DashboardCardId.DOCKER_NETWORK_LIST).addable)
+        assertTrue(catalogue.getValue(DashboardCardId.DOCKER_VOLUME_LIST).addable)
+        assertTrue(catalogue.getValue(DashboardCardId.DOCKER_REGISTRY).addable)
+        assertTrue(cards.keys.all { it.name.startsWith("DOCKER_") })
+    }
+
+    @Test
     fun cardOrderHonorsSavedSelectionAndCanMoveSeveralPlaces() {
         val catalogue = DashboardCardModel.catalogue(
             SystemInfoSnapshot(hostname = "router"),
