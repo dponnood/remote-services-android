@@ -10,7 +10,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import xin.dponnood.remoteservice.core.model.ServiceConfig
 import xin.dponnood.remoteservice.core.model.ServiceType
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -211,36 +210,21 @@ class SystemDashboardTest {
     }
 
     @Test
-    fun latencyBatchTestsEachDistinctCandidateAndContinuesAfterFailure() = runTest {
-        val service = ServiceConfig(id = "clash", displayName = "Zashboard", serviceType = ServiceType.OPENCLASH)
-        val first = OpenClashNodeLatencyTarget("手动选择", "node-a")
-        val second = OpenClashNodeLatencyTarget("手动选择", "node-b")
-        val third = OpenClashNodeLatencyTarget("手动选择", "node-c")
-        val started = mutableListOf<OpenClashNodeLatencyTarget>()
-        val completed = mutableListOf<Pair<OpenClashNodeLatencyTarget, OpenClashNodeLatencyResult>>()
-        val tester = object : OpenClashNodeLatencyTester {
-            override suspend fun testNodeLatency(
-                service: ServiceConfig,
-                groupName: String,
-                nodeName: String,
-            ): OpenClashNodeLatencyResult = when (nodeName) {
-                "node-b" -> OpenClashNodeLatencyResult.Failure("timeout")
-                "node-c" -> error("connection reset")
-                else -> OpenClashNodeLatencyResult.Success(42)
-            }
-        }
-
-        tester.testNodeLatencies(
-            service = service,
-            targets = listOf(first, second, first, third),
-            onNodeTesting = { started += it },
-            onNodeResult = { target, result -> completed += target to result },
+    fun totalQuickTestUsesOnlyDistinctNodesFromTheManualSelectionGroup() {
+        val manualGroup = OpenClashProxyGroup(
+            "手动选择",
+            "node-a",
+            listOf("node-a", "node-a", "node-b"),
+        )
+        val groups = listOf(
+            OpenClashProxyGroup("香港节点", "node-a", listOf("node-a", "node-b")),
+            manualGroup,
+            OpenClashProxyGroup("日本节点", "node-c", listOf("node-b", "node-c")),
         )
 
-        assertEquals(listOf(first, second, third), started)
-        assertEquals(first to OpenClashNodeLatencyResult.Success(42), completed[0])
-        assertEquals(second to OpenClashNodeLatencyResult.Failure("timeout"), completed[1])
-        assertEquals(third to OpenClashNodeLatencyResult.Failure("延迟检测失败，请稍后重试"), completed[2])
+        assertEquals(manualGroup, manualSelectionProxyGroup(groups))
+        assertEquals(listOf("node-a", "node-b"), manualGroup.distinctNodeCandidates())
+        assertEquals(null, manualSelectionProxyGroup(groups.filterNot { it.name == "手动选择" }))
     }
 
     @Test

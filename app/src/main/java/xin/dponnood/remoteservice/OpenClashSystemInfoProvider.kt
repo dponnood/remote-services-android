@@ -17,9 +17,11 @@ import xin.dponnood.remoteservice.core.network.HttpOpenClashApiTransport
 import xin.dponnood.remoteservice.core.network.OpenClashApiException
 import xin.dponnood.remoteservice.core.network.OpenClashConfig
 import xin.dponnood.remoteservice.core.network.OpenClashConnectionSnapshot
+import xin.dponnood.remoteservice.core.network.OpenClashProxy
 import xin.dponnood.remoteservice.core.network.OpenClashProxySnapshot
 import xin.dponnood.remoteservice.core.network.OpenClashProxySelector
 import xin.dponnood.remoteservice.core.network.OpenClashProxyDelayTester
+import xin.dponnood.remoteservice.core.network.OpenClashProxyGroupDelayTester
 import xin.dponnood.remoteservice.core.network.OpenClashVersion
 import xin.dponnood.remoteservice.core.network.ReadOnlyOpenClashApiClient
 import xin.dponnood.remoteservice.core.network.RouteKind
@@ -32,6 +34,8 @@ import xin.dponnood.remoteservice.feature.services.OpenClashNodeSwitchResult
 import xin.dponnood.remoteservice.feature.services.OpenClashNodeSwitcher
 import xin.dponnood.remoteservice.feature.services.OpenClashNodeLatencyResult
 import xin.dponnood.remoteservice.feature.services.OpenClashNodeLatencyTester
+import xin.dponnood.remoteservice.feature.services.OpenClashNodeGroupLatencyResult
+import xin.dponnood.remoteservice.feature.services.OpenClashNodeGroupLatencyTester
 import xin.dponnood.remoteservice.feature.services.OpenClashProxyGroup
 import xin.dponnood.remoteservice.feature.services.SystemInfoProvider
 import xin.dponnood.remoteservice.feature.services.SystemInfoResult
@@ -53,7 +57,7 @@ internal class OpenClashSystemInfoProvider(
     private val controllerStatusClient: OpenClashControllerStatusClient =
         OpenClashControllerStatusClient(),
     private val logRepository: LogRepository? = null,
-) : SystemInfoProvider, OpenClashNodeSwitcher, OpenClashNodeLatencyTester {
+) : SystemInfoProvider, OpenClashNodeSwitcher, OpenClashNodeLatencyTester, OpenClashNodeGroupLatencyTester {
     private val counters = ConcurrentHashMap<String, TrafficCounter>()
     private val lastSuccessLogAt = ConcurrentHashMap<String, Long>()
     private val lastApiFailureLogAt = ConcurrentHashMap<String, Long>()
@@ -163,6 +167,8 @@ internal class OpenClashSystemInfoProvider(
         val groups = proxies?.groups.orEmpty()
         val selectedGroup = groups.firstOrNull { !it.now.isNullOrBlank() }
             ?.let { group -> "${group.name}：${group.now}" }
+        val proxyGroupNames = groups.mapTo(hashSetOf(), OpenClashProxy::name)
+        val proxyNames = proxies?.proxies.orEmpty().mapTo(hashSetOf(), OpenClashProxy::name)
         val snapshot = OpenClashDashboardSnapshot(
             running = controller?.running,
             version = version?.version,
@@ -187,6 +193,9 @@ internal class OpenClashSystemInfoProvider(
                             name = group.name,
                             currentNode = group.now,
                             candidates = it,
+                            nodeCandidates = it.filter { candidate ->
+                                candidate in proxyNames && candidate !in proxyGroupNames
+                            },
                         )
                     }
                 },
@@ -421,6 +430,130 @@ internal class OpenClashSystemInfoProvider(
                     apiFailure?.statusCode in setOf(408, 504) || failure is SocketTimeoutException ->
                         "延迟检测超时，请稍后重试"
                     else -> "延迟检测失败，请确认节点可用后重试"
+                },
+            )
+        }
+    }
+
+    override suspend fun testNodeGroupLatency(
+        service: ServiceConfig,
+        groupName: String,
+    ): OpenClashNodeGroupLatencyResult {
+        if (service.serviceType != ServiceType.OPENCLASH) {
+            return OpenClashNodeGroupLatencyResult.Failure("当前服务不是 OpenClash")
+        }
+        if (groupName.isBlank()) {
+            return OpenClashNodeGroupLatencyResult.Failure("代理组名称不能为空")
+        }
+
+        var routeLabel = "unknown"
+        return try {
+            val resolved = when (val result = routeResolver.resolve(service.toRouteConfig())) {
+                is RouteResolutionResult.Success -> result.value
+                is RouteResolutionResult.Failure -> return OpenClashNodeGroupLatencyResult.Failure(
+                    "OpenClash 线路不可用（${result.code.name}）",
+                )
+            }
+            routeLabel = resolved.endpoint.kind.name
+            val origin = IStoreSessionManager.originOf(resolved.endpoint.url)
+                ?: return OpenClashNodeGroupLatencyResult.Failure("OpenClash 服务地址无效")
+            var sessionResult = runCatchingCancellable { sessionManager.ensure(service, resolved) }.getOrNull()
+            var session = (sessionResult as? IStoreSessionResult.Authenticated)?.session
+            var cookie = session?.cookieHeader ?: readCookie(origin)
+            var status = controllerStatusClient.fetch(origin, cookie)
+            if (status.requiresSessionRefresh && sessionResult is IStoreSessionResult.Authenticated) {
+                sessionResult = runCatchingCancellable {
+                    sessionManager.forceReauthenticate(service, resolved)
+                }.getOrNull()
+                session = (sessionResult as? IStoreSessionResult.Authenticated)?.session
+                if (session != null) {
+                    cookie = session.cookieHeader.ifBlank { readCookie(origin).orEmpty() }
+                    status = controllerStatusClient.fetch(origin, cookie)
+                }
+            }
+            val controller = status.info ?: run {
+                val message = when (sessionResult) {
+                    is IStoreSessionResult.MissingCredentials -> sessionResult.message
+                    is IStoreSessionResult.Failed -> "iStore 登录失败：${sessionResult.message}"
+                    else -> "无法读取 OpenClash 控制器信息，请确认 iStore 登录状态和权限"
+                }
+                return OpenClashNodeGroupLatencyResult.Failure(message)
+            }
+            val apiBase = apiBaseUrl(resolved, controller.controllerHost, controller.controllerPort)
+                ?: return OpenClashNodeGroupLatencyResult.Failure("OpenClash API 地址无效")
+            val transport = HttpOpenClashApiTransport(
+                baseUrl = apiBase,
+                secretProvider = { controller.secret },
+                connectTimeoutMs = API_CONNECT_TIMEOUT_MS,
+                readTimeoutMs = NODE_DELAY_READ_TIMEOUT_MS,
+            )
+
+            val proxySnapshot = ReadOnlyOpenClashApiClient(transport).fetchProxies()
+            val freshGroup = proxySnapshot.proxies.firstOrNull { it.name == groupName }
+                ?: return OpenClashNodeGroupLatencyResult.Failure("代理组已变化，请刷新状态后重试")
+            if (!freshGroup.type.equals("Selector", ignoreCase = true)) {
+                return OpenClashNodeGroupLatencyResult.Failure("该代理组不支持节点快速测速")
+            }
+            val strategyGroupNames = proxySnapshot.groups.mapTo(hashSetOf(), OpenClashProxy::name)
+            val knownProxyNames = proxySnapshot.proxies.mapTo(hashSetOf(), OpenClashProxy::name)
+            val nodeNames = freshGroup.all.asSequence()
+                .filter(String::isNotBlank)
+                .distinct()
+                .filter { it in knownProxyNames && it !in strategyGroupNames }
+                .toSet()
+            if (nodeNames.isEmpty()) {
+                return OpenClashNodeGroupLatencyResult.Failure("当前分组没有可测速的节点")
+            }
+
+            // This is one native Mihomo group request; the router runs the member checks together.
+            val delays = OpenClashProxyGroupDelayTester(transport).testGroupDelay(groupName)
+                .filterKeys(nodeNames::contains)
+            logRepository?.append(
+                LogLevel.INFO,
+                "OPENCLASH_GROUP_QUICK_TESTED",
+                "OpenClash 分组快速测速完成",
+                context = mapOf(
+                    "service_id" to service.id,
+                    "route" to routeLabel,
+                    "group_name" to groupName,
+                    "node_count" to nodeNames.size.toString(),
+                    "result_count" to delays.size.toString(),
+                ),
+            )
+            OpenClashNodeGroupLatencyResult.Success(delays)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            val apiFailure = failure as? OpenClashApiException
+            val logNow = System.currentTimeMillis()
+            if (lastApiFailureLogAt.claimLogInterval(
+                    "${service.id}|$routeLabel|group-delay",
+                    logNow,
+                    API_FAILURE_LOG_INTERVAL_MS,
+                )
+            ) {
+                logRepository?.append(
+                    LogLevel.WARN,
+                    "OPENCLASH_GROUP_QUICK_TEST_FAILED",
+                    "OpenClash 分组快速测速失败",
+                    context = buildMap {
+                        put("service_id", service.id)
+                        put("route", routeLabel)
+                        put("group_name", groupName)
+                        apiFailure?.statusCode?.let { put("status_code", it.toString()) }
+                        put("error_type", failure::class.java.simpleName)
+                    },
+                )
+            }
+            OpenClashNodeGroupLatencyResult.Failure(
+                when {
+                    apiFailure?.statusCode == 404 &&
+                        apiFailure.path.substringBefore('?').endsWith("/delay") ->
+                        "当前 OpenClash/Mihomo 控制器不支持分组快速测速，请更新核心"
+                    apiFailure?.statusCode in setOf(401, 403) -> "控制器拒绝了测速请求，请检查认证和权限"
+                    apiFailure?.statusCode in setOf(408, 504) || failure is SocketTimeoutException ->
+                        "OpenClash 快速测速超时，请稍后重试"
+                    else -> "OpenClash 快速测速失败，请确认服务正常后重试"
                 },
             )
         }

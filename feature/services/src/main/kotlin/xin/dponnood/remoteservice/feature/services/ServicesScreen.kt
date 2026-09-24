@@ -278,6 +278,8 @@ fun ServicesScreen(
     openClashNodeSwitcher: OpenClashNodeSwitcher? = null,
     /** Explicit per-node delay probing; kept separate from periodic status refresh. */
     openClashNodeLatencyTester: OpenClashNodeLatencyTester? = null,
+    /** Native OpenClash/Mihomo group quick test; one request returns all member delays. */
+    openClashNodeGroupLatencyTester: OpenClashNodeGroupLatencyTester? = null,
 ) {
     val authenticationDisabledHandler = rememberUpdatedState(onAuthenticationDisabled)
     val serviceDeletedHandler = rememberUpdatedState(onServiceDeleted)
@@ -425,70 +427,107 @@ fun ServicesScreen(
             }
             if (selectedServiceIdState.value != service.id) return@launch
             testingNode = null
-            nodeLatencyResults[key] = result.toLatencyDisplay()
+            val display = result.toLatencyDisplay()
+            val matchingGroupNames = dashboardState.selectableGroups
+                .filter { nodeName in it.candidates }
+                .map(OpenClashProxyGroup::name) + groupName
+            matchingGroupNames.distinct().forEach { resultGroupName ->
+                nodeLatencyResults[OpenClashNodeLatencyKey(resultGroupName, nodeName)] = display
+            }
         }
     }
 
-    fun testOpenClashNodeBatch(
-        targets: List<OpenClashNodeLatencyTarget>,
-        label: String,
-        groupName: String? = null,
-    ) {
+    fun testOpenClashGroupQuickTest(group: OpenClashProxyGroup, label: String) {
         val service = selectedService?.config ?: return
-        val tester = openClashNodeLatencyTester ?: return
-        val uniqueTargets = targets.distinct()
-        if (uniqueTargets.isEmpty() || testingNode != null || switchingNodeGroup != null ||
+        val tester = openClashNodeGroupLatencyTester ?: return
+        val nodeNames = group.distinctNodeCandidates()
+        if (nodeNames.isEmpty()) {
+            nodeSwitchFeedback = "$label：当前分组没有可测速节点"
+            return
+        }
+        if (testingNode != null || switchingNodeGroup != null ||
             latencyBatchProgress != null
         ) return
 
         latencyBatchProgress = OpenClashLatencyBatchProgress(
             label = label,
-            groupName = groupName,
-            total = uniqueTargets.size,
+            groupName = group.name,
+            total = nodeNames.size,
         )
+        nodeNames.forEach { nodeName ->
+            val resultGroupNames = dashboardState.selectableGroups
+                .filter { nodeName in it.candidates }
+                .map(OpenClashProxyGroup::name) + group.name
+            resultGroupNames.distinct().forEach { resultGroupName ->
+                nodeLatencyResults[OpenClashNodeLatencyKey(resultGroupName, nodeName)] =
+                    OpenClashNodeLatencyDisplay.Testing
+            }
+        }
         latencyBatchJob = dashboardScope.launch {
-            var successfulTests = 0
             try {
-                tester.testNodeLatencies(
+                val result = tester.testNodeGroupLatency(
                     service = service,
-                    targets = uniqueTargets,
-                    onNodeTesting = { target ->
-                        if (selectedServiceIdState.value != service.id) {
-                            throw CancellationException("Selected service changed")
-                        }
-                        val key = OpenClashNodeLatencyKey(target.groupName, target.nodeName)
-                        testingNode = key
-                        nodeLatencyResults[key] = OpenClashNodeLatencyDisplay.Testing
-                        latencyBatchProgress = latencyBatchProgress?.copy(
-                            activeNodeName = target.nodeName,
-                        )
-                    },
-                    onNodeResult = { target, result ->
-                        if (selectedServiceIdState.value != service.id) {
-                            throw CancellationException("Selected service changed")
-                        }
-                        val key = OpenClashNodeLatencyKey(target.groupName, target.nodeName)
-                        testingNode = null
-                        nodeLatencyResults[key] = result.toLatencyDisplay()
-                        if (result is OpenClashNodeLatencyResult.Success) successfulTests++
-                        latencyBatchProgress = latencyBatchProgress?.copy(
-                            completed = (latencyBatchProgress?.completed ?: 0) + 1,
-                            activeNodeName = null,
-                        )
-                    },
+                    groupName = group.name,
                 )
-                if (selectedServiceIdState.value == service.id) {
-                    nodeSwitchFeedback = "${label}完成：成功 $successfulTests/${uniqueTargets.size} 个节点"
+                if (selectedServiceIdState.value != service.id) {
+                    throw CancellationException("Selected service changed")
                 }
+                val delays = (result as? OpenClashNodeGroupLatencyResult.Success)?.delayMillisByNode.orEmpty()
+                val groupFailure = (result as? OpenClashNodeGroupLatencyResult.Failure)?.message
+                val displays = nodeNames.associateWith { nodeName ->
+                    when {
+                        groupFailure != null -> OpenClashNodeLatencyDisplay.Failure(groupFailure)
+                        delays[nodeName] == null -> OpenClashNodeLatencyDisplay.Failure("插件未返回该节点的测速结果")
+                        delays.getValue(nodeName) <= 0 -> OpenClashNodeLatencyDisplay.Failure("节点测速失败或超时")
+                        else -> OpenClashNodeLatencyDisplay.Success(delays.getValue(nodeName))
+                    }
+                }
+                val allGroups = dashboardState.selectableGroups
+                displays.forEach { (nodeName, display) ->
+                    val resultGroupNames = allGroups.filter { nodeName in it.candidates }
+                        .map(OpenClashProxyGroup::name) + group.name
+                    resultGroupNames.distinct().forEach { resultGroupName ->
+                        nodeLatencyResults[OpenClashNodeLatencyKey(resultGroupName, nodeName)] = display
+                    }
+                }
+                val successes = displays.values.count { it is OpenClashNodeLatencyDisplay.Success }
+                nodeSwitchFeedback = if (groupFailure != null) {
+                    groupFailure
+                } else {
+                    "${label}完成：成功 $successes/${nodeNames.size} 个节点"
+                }
+                latencyBatchProgress = latencyBatchProgress?.copy(completed = nodeNames.size)
             } catch (cancelled: CancellationException) {
                 if (selectedServiceIdState.value == service.id) nodeSwitchFeedback = "测速已取消"
                 throw cancelled
+            } catch (_: Exception) {
+                if (selectedServiceIdState.value == service.id) {
+                    val failed = OpenClashNodeLatencyDisplay.Failure("OpenClash 快速测速失败")
+                    val allGroups = dashboardState.selectableGroups
+                    nodeNames.forEach { nodeName ->
+                        val resultGroupNames = allGroups.filter { nodeName in it.candidates }
+                            .map(OpenClashProxyGroup::name) + group.name
+                        resultGroupNames.distinct().forEach { resultGroupName ->
+                            nodeLatencyResults[OpenClashNodeLatencyKey(resultGroupName, nodeName)] = failed
+                        }
+                    }
+                    nodeSwitchFeedback = "OpenClash 快速测速失败，请重试"
+                }
             } finally {
                 if (selectedServiceIdState.value == service.id) {
-                    testingNode?.let { key ->
-                        nodeLatencyResults[key] = OpenClashNodeLatencyDisplay.Failure("已取消")
+                    if (latencyBatchJob?.isCancelled == true) {
+                        nodeNames.forEach { nodeName ->
+                            val resultGroupNames = dashboardState.selectableGroups
+                                .filter { nodeName in it.candidates }
+                                .map(OpenClashProxyGroup::name) + group.name
+                            resultGroupNames.distinct().forEach { resultGroupName ->
+                                val key = OpenClashNodeLatencyKey(resultGroupName, nodeName)
+                                if (nodeLatencyResults[key] == OpenClashNodeLatencyDisplay.Testing) {
+                                    nodeLatencyResults[key] = OpenClashNodeLatencyDisplay.Failure("已取消")
+                                }
+                            }
+                        }
                     }
-                    testingNode = null
                     latencyBatchProgress = null
                     latencyBatchJob = null
                 }
@@ -499,21 +538,16 @@ fun ServicesScreen(
     fun testOpenClashGroup(groupName: String) {
         val group = prioritizeManualSelectionProxyGroups(dashboardState.selectableGroups)
             .firstOrNull { it.name == groupName } ?: return
-        testOpenClashNodeBatch(
-            targets = group.candidates.map { node -> OpenClashNodeLatencyTarget(group.name, node) },
-            label = "本组测速",
-            groupName = group.name,
-        )
+        testOpenClashGroupQuickTest(group, "本组快速测速")
     }
 
     fun testAllOpenClashNodes() {
-        val orderedGroups = prioritizeManualSelectionProxyGroups(dashboardState.selectableGroups)
-        testOpenClashNodeBatch(
-            targets = orderedGroups.flatMap { group ->
-                group.candidates.map { node -> OpenClashNodeLatencyTarget(group.name, node) }
-            },
-                label = "总测速",
-        )
+        val manualGroup = manualSelectionProxyGroup(dashboardState.selectableGroups)
+        if (manualGroup == null) {
+            nodeSwitchFeedback = "未找到手动选择分组，无法调用 OpenClash 原生总测速"
+            return
+        }
+        testOpenClashGroupQuickTest(manualGroup, "总测速")
     }
 
     fun cancelOpenClashNodeBatch() {
@@ -740,6 +774,7 @@ fun ServicesScreen(
                 cardLayoutSaveError = cardLayoutSaveError,
                 openClashNodeSwitcher = openClashNodeSwitcher,
                 openClashNodeLatencyTester = openClashNodeLatencyTester,
+                openClashNodeGroupLatencyTester = openClashNodeGroupLatencyTester,
                 switchingNodeGroup = switchingNodeGroup,
                 nodeSwitchFeedback = nodeSwitchFeedback,
                 testingNode = testingNode,
@@ -864,6 +899,7 @@ private fun ServicesContent(
     cardLayoutSaveError: String?,
     openClashNodeSwitcher: OpenClashNodeSwitcher?,
     openClashNodeLatencyTester: OpenClashNodeLatencyTester?,
+    openClashNodeGroupLatencyTester: OpenClashNodeGroupLatencyTester?,
     switchingNodeGroup: String?,
     nodeSwitchFeedback: String?,
     testingNode: OpenClashNodeLatencyKey?,
@@ -978,6 +1014,7 @@ private fun ServicesContent(
                                 selectableGroups = dashboardState.selectableGroups,
                                 nodeSwitchEnabled = openClashNodeSwitcher != null,
                                 nodeLatencyEnabled = openClashNodeLatencyTester != null,
+                                nodeGroupLatencyEnabled = openClashNodeGroupLatencyTester != null,
                                 switchingNodeGroup = switchingNodeGroup,
                                 nodeSwitchFeedback = nodeSwitchFeedback,
                                 testingNode = testingNode,
@@ -1043,6 +1080,7 @@ private fun DashboardSection(
     selectableGroups: List<OpenClashProxyGroup>,
     nodeSwitchEnabled: Boolean,
     nodeLatencyEnabled: Boolean,
+    nodeGroupLatencyEnabled: Boolean,
     switchingNodeGroup: String?,
     nodeSwitchFeedback: String?,
     testingNode: OpenClashNodeLatencyKey?,
@@ -1247,6 +1285,7 @@ private fun DashboardSection(
                                     feedback = nodeSwitchFeedback,
                                     nodeSwitchEnabled = nodeSwitchEnabled,
                                     nodeLatencyEnabled = nodeLatencyEnabled,
+                                    nodeGroupLatencyEnabled = nodeGroupLatencyEnabled,
                                     testingNode = testingNode,
                                     latencyResults = nodeLatencyResults,
                                     latencyBatchProgress = latencyBatchProgress,
@@ -1693,7 +1732,6 @@ private data class OpenClashLatencyBatchProgress(
     val groupName: String? = null,
     val total: Int,
     val completed: Int = 0,
-    val activeNodeName: String? = null,
 )
 
 private fun OpenClashNodeLatencyResult.toLatencyDisplay(): OpenClashNodeLatencyDisplay = when (this) {
@@ -1722,6 +1760,7 @@ private fun OpenClashNodeSelectorCard(
     feedback: String?,
     nodeSwitchEnabled: Boolean,
     nodeLatencyEnabled: Boolean,
+    nodeGroupLatencyEnabled: Boolean,
     testingNode: OpenClashNodeLatencyKey?,
     latencyResults: Map<OpenClashNodeLatencyKey, OpenClashNodeLatencyDisplay>,
     latencyBatchProgress: OpenClashLatencyBatchProgress?,
@@ -1758,7 +1797,7 @@ private fun OpenClashNodeSelectorCard(
                 Spacer(Modifier.weight(1f))
                 FilledTonalButton(
                     onClick = if (latencyBatchProgress != null) onCancelBatch else onTestAllNodes,
-                    enabled = latencyBatchProgress != null || (nodeLatencyEnabled &&
+                    enabled = latencyBatchProgress != null || (nodeGroupLatencyEnabled &&
                         testingNode == null && switchingGroup == null),
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                 ) {
@@ -1875,8 +1914,8 @@ private fun OpenClashNodeSelectorCard(
                         if (latencyBatchProgress != null) onCancelBatch() else onTestGroup(group.name)
                     },
                     modifier = Modifier.fillMaxWidth(),
-                    enabled = latencyBatchProgress != null || (group.candidates.isNotEmpty() &&
-                        nodeLatencyEnabled && testingNode == null && switchingGroup == null),
+                    enabled = latencyBatchProgress != null || (group.distinctNodeCandidates().isNotEmpty() &&
+                        nodeGroupLatencyEnabled && testingNode == null && switchingGroup == null),
                 ) {
                     if (latencyBatchProgress != null) {
                         CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
@@ -1885,7 +1924,7 @@ private fun OpenClashNodeSelectorCard(
                     } else {
                         Icon(Icons.Outlined.Speed, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text("测速本组 · ${group.candidates.size} 个节点")
+                        Text("快速测速本组 · ${group.distinctNodeCandidates().size} 个节点")
                     }
                 }
                 Spacer(Modifier.height(8.dp))

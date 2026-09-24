@@ -205,6 +205,37 @@ class OpenClashApiTest {
     }
 
     @Test
+    fun groupDelayTesterUsesNativeGroupQuickTestAndReturnsAllNodeDelays() = runTest {
+        val path = OpenClashApiPaths.groupDelay(
+            groupName = "手动选择/A",
+            url = "https://example.test/p?q=a&b=c",
+            timeoutMs = 4_321,
+        )
+        val transport = RecordingTransport(mapOf(path to """{"node-a":42,"node-b":0}"""))
+
+        val delays = OpenClashProxyGroupDelayTester(transport).testGroupDelay(
+            groupName = "手动选择/A",
+            url = "https://example.test/p?q=a&b=c",
+            timeoutMs = 4_321,
+        )
+
+        assertEquals(mapOf("node-a" to 42, "node-b" to 0), delays)
+        assertEquals(
+            "/group/%E6%89%8B%E5%8A%A8%E9%80%89%E6%8B%A9%2FA/delay?url=https%3A%2F%2Fexample.test%2Fp%3Fq%3Da%26b%3Dc&timeout=4321",
+            path,
+        )
+        assertEquals(listOf(path), transport.paths)
+    }
+
+    @Test
+    fun groupDelayParserRejectsInvalidNodeLatencyValues() {
+        listOf("[]", "{\"node\":65536}", "{\"node\":1.5}", "{\"node\":null}").forEach { payload ->
+            val failure = runCatching { OpenClashJsonParser.parseGroupDelay(payload) }.exceptionOrNull()
+            assertTrue("Expected invalid group delay payload to fail: $payload", failure is OpenClashApiException)
+        }
+    }
+
+    @Test
     fun proxyDelayParserAcceptsNumericStringButRejectsMissingOrOutOfRangeValues() {
         assertEquals(250, OpenClashJsonParser.parseProxyDelay("{\"delay\":\"250\"}"))
         listOf("{}", "{\"delay\":65536}", "{\"delay\":1.5}").forEach { payload ->

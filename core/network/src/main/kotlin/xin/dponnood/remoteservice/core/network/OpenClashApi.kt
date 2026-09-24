@@ -33,6 +33,12 @@ object OpenClashApiPaths {
         return "$PROXIES/$encodedProxy/delay?url=$encodedUrl&timeout=$timeoutMs"
     }
 
+    fun groupDelay(groupName: String, url: String, timeoutMs: Int): String {
+        val encodedGroup = encodeComponent(groupName)
+        val encodedUrl = encodeComponent(url)
+        return "/group/$encodedGroup/delay?url=$encodedUrl&timeout=$timeoutMs"
+    }
+
     private fun encodeComponent(value: String): String =
         URLEncoder.encode(value, Charsets.UTF_8.name()).replace("+", "%20")
 }
@@ -266,6 +272,34 @@ class OpenClashProxyDelayTester(
     }
 }
 
+/** Uses Mihomo's native group quick-test endpoint to probe group members together. */
+class OpenClashProxyGroupDelayTester(
+    private val transport: OpenClashApiTransport,
+) {
+    suspend fun testGroupDelay(
+        groupName: String,
+        url: String = OpenClashProxyDelayTester.DEFAULT_TEST_URL,
+        timeoutMs: Int = OpenClashProxyDelayTester.DEFAULT_TIMEOUT_MS,
+    ): Map<String, Int> {
+        val normalizedUrl = url.trim()
+        require(groupName.isNotBlank()) { "Proxy group name must not be blank" }
+        require(isHttpUrl(normalizedUrl)) { "Delay test URL must be HTTP or HTTPS" }
+        require(timeoutMs in MIN_TIMEOUT_MS..MAX_TIMEOUT_MS) { "Delay test timeout is out of range" }
+        val path = OpenClashApiPaths.groupDelay(groupName, normalizedUrl, timeoutMs)
+        return OpenClashJsonParser.parseGroupDelay(transport.get(path))
+    }
+
+    companion object {
+        private const val MIN_TIMEOUT_MS = 500
+        private const val MAX_TIMEOUT_MS = 30_000
+    }
+}
+
+private fun isHttpUrl(value: String): Boolean {
+    val uri = runCatching { URI(value.trim()) }.getOrNull() ?: return false
+    return uri.scheme?.lowercase(Locale.US) in setOf("http", "https") && !uri.host.isNullOrBlank()
+}
+
 /**
  * Small URLConnection transport for REST endpoints. The authorization secret
  * is supplied at request time and is never logged, persisted, or placed in a
@@ -479,6 +513,25 @@ object OpenClashJsonParser {
         }?.takeIf { it in 0..MAX_DELAY_MS }
             ?: throw OpenClashApiException(path, message = "OpenClash delay response is invalid")
         return delay
+    }
+
+    fun parseGroupDelay(payload: String): Map<String, Int> {
+        val path = "/group/{group}/delay"
+        val root = payload.toJsonObject(path)
+        val delays = linkedMapOf<String, Int>()
+        val names = root.keys()
+        while (names.hasNext()) {
+            val name = names.next()
+            val raw = root.opt(name)
+            val delay = when (raw) {
+                is Number -> raw.toDouble().takeIf { it.isFinite() && it % 1.0 == 0.0 }?.toInt()
+                is String -> raw.trim().toIntOrNull()
+                else -> null
+            }?.takeIf { it in 0..MAX_DELAY_MS }
+                ?: throw OpenClashApiException(path, message = "OpenClash group delay response is invalid")
+            delays[name] = delay
+        }
+        return delays
     }
 
     fun parseConnections(payload: String): OpenClashConnectionSnapshot {

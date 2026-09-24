@@ -603,22 +603,28 @@ data class OpenClashProxyGroup(
     val name: String,
     val currentNode: String?,
     val candidates: List<String>,
+    /** Leaf proxies only; null keeps compatibility with callers lacking proxy type metadata. */
+    val nodeCandidates: List<String>? = null,
 )
 
-data class OpenClashNodeLatencyTarget(
-    val groupName: String,
-    val nodeName: String,
-)
+private fun OpenClashProxyGroup.isManualSelection(): Boolean {
+    val normalizedName = name.trim().lowercase(Locale.ROOT)
+        .replace('_', ' ')
+        .replace('-', ' ')
+        .replace(Regex("\\s+"), " ")
+    return normalizedName in setOf("手动选择", "manual", "manual select", "manual selection")
+}
 
 /** Keep the explicit manual-choice group easy to find without reordering the others. */
 fun prioritizeManualSelectionProxyGroups(groups: List<OpenClashProxyGroup>): List<OpenClashProxyGroup> =
-    groups.sortedBy { group ->
-        val normalizedName = group.name.trim().lowercase(Locale.ROOT)
-            .replace('_', ' ')
-            .replace('-', ' ')
-            .replace(Regex("\\s+"), " ")
-        if (normalizedName in setOf("手动选择", "manual", "manual select", "manual selection")) 0 else 1
-    }
+    groups.sortedBy { group -> if (group.isManualSelection()) 0 else 1 }
+
+/** The canonical all-node group used for one native total-speed-test request. */
+fun manualSelectionProxyGroup(groups: List<OpenClashProxyGroup>): OpenClashProxyGroup? =
+    groups.firstOrNull(OpenClashProxyGroup::isManualSelection)
+
+fun OpenClashProxyGroup.distinctNodeCandidates(): List<String> =
+    (nodeCandidates ?: candidates).filter(String::isNotBlank).distinct()
 
 /** Values returned by a vendor-specific or app-server-specific adapter. */
 data class SystemInfoSnapshot(
@@ -699,6 +705,11 @@ sealed interface OpenClashNodeLatencyResult {
     data class Failure(val message: String) : OpenClashNodeLatencyResult
 }
 
+sealed interface OpenClashNodeGroupLatencyResult {
+    data class Success(val delayMillisByNode: Map<String, Int>) : OpenClashNodeGroupLatencyResult
+    data class Failure(val message: String) : OpenClashNodeGroupLatencyResult
+}
+
 /** Explicitly probes one Mihomo candidate without changing a selector group. */
 fun interface OpenClashNodeLatencyTester {
     suspend fun testNodeLatency(
@@ -707,25 +718,14 @@ fun interface OpenClashNodeLatencyTester {
         nodeName: String,
     ): OpenClashNodeLatencyResult
 
-    /** Tests each requested proxy once, reporting start and completion for progress UI. */
-    suspend fun testNodeLatencies(
+}
+
+/** Delegates a complete group check to Mihomo/OpenClash's native quick-test endpoint. */
+fun interface OpenClashNodeGroupLatencyTester {
+    suspend fun testNodeGroupLatency(
         service: ServiceConfig,
-        targets: List<OpenClashNodeLatencyTarget>,
-        onNodeTesting: suspend (OpenClashNodeLatencyTarget) -> Unit = {},
-        onNodeResult: suspend (OpenClashNodeLatencyTarget, OpenClashNodeLatencyResult) -> Unit,
-    ) {
-        targets.distinct().forEach { target ->
-            onNodeTesting(target)
-            val result = try {
-                testNodeLatency(service, target.groupName, target.nodeName)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                OpenClashNodeLatencyResult.Failure("延迟检测失败，请稍后重试")
-            }
-            onNodeResult(target, result)
-        }
-    }
+        groupName: String,
+    ): OpenClashNodeGroupLatencyResult
 }
 
 /**

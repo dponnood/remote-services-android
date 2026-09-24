@@ -118,6 +118,7 @@ import xin.dponnood.remoteservice.adapter.luci.LuciWebViewHook
 import xin.dponnood.remoteservice.feature.services.ServicesScreen
 import xin.dponnood.remoteservice.feature.services.OpenClashNodeSwitcher
 import xin.dponnood.remoteservice.feature.services.OpenClashNodeLatencyTester
+import xin.dponnood.remoteservice.feature.services.OpenClashNodeGroupLatencyTester
 import xin.dponnood.remoteservice.feature.services.SystemInfoProvider
 import xin.dponnood.remoteservice.feature.settings.SettingsScreen
 import xin.dponnood.remoteservice.feature.settings.NetworkSettingsScreen
@@ -366,6 +367,7 @@ class MainActivity : ComponentActivity() {
                     systemInfoProvider = systemInfoProvider,
                     openClashNodeSwitcher = openClashSystemInfoProvider,
                     openClashNodeLatencyTester = openClashSystemInfoProvider,
+                    openClashNodeGroupLatencyTester = openClashSystemInfoProvider,
                     wifiPermissionRefreshToken = wifiNamesPermissionRefreshToken,
                     onRequestWifiPermissions = ::requestWifiNamePermissions,
                 )
@@ -908,6 +910,7 @@ private fun RemoteServicesApp(
     systemInfoProvider: SystemInfoProvider,
     openClashNodeSwitcher: OpenClashNodeSwitcher,
     openClashNodeLatencyTester: OpenClashNodeLatencyTester,
+    openClashNodeGroupLatencyTester: OpenClashNodeGroupLatencyTester,
     wifiPermissionRefreshToken: Int,
     onRequestWifiPermissions: () -> Unit,
 ) {
@@ -927,6 +930,7 @@ private fun RemoteServicesApp(
             systemInfoProvider = systemInfoProvider,
             openClashNodeSwitcher = openClashNodeSwitcher,
             openClashNodeLatencyTester = openClashNodeLatencyTester,
+            openClashNodeGroupLatencyTester = openClashNodeGroupLatencyTester,
             wifiPermissionRefreshToken = wifiPermissionRefreshToken,
             onRequestWifiPermissions = onRequestWifiPermissions,
         )
