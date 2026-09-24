@@ -147,7 +147,7 @@ class SystemDashboardTest {
     }
 
     @Test
-    fun openClashCatalogueIncludesFineGrainedApiMetrics() {
+    fun openClashManagementCatalogueIncludesFineGrainedApiMetrics() {
         val catalogue = DashboardCardModel.catalogue(
             SystemInfoSnapshot(
                 openClash = OpenClashDashboardSnapshot(
@@ -159,14 +159,40 @@ class SystemDashboardTest {
                     uploadTotalBytes = 1024,
                 ),
             ),
-            ServiceType.OPENCLASH,
+            ServiceType.OPENCLASH_PANEL,
         ).associateBy { it.model.id }
 
         assertTrue(catalogue.getValue(DashboardCardId.OPENCLASH_CONFIG).addable)
         assertTrue(catalogue.getValue(DashboardCardId.OPENCLASH_ROUTE).addable)
         assertTrue(catalogue.getValue(DashboardCardId.OPENCLASH_DOWNLOAD_TOTAL).addable)
         assertTrue(catalogue.getValue(DashboardCardId.OPENCLASH_UPLOAD_RATE).addable)
-        assertTrue(catalogue.getValue(DashboardCardId.CPU).addable.not())
+        assertFalse(DashboardCardId.OPENCLASH_NODE_SELECTOR in catalogue)
+    }
+
+    @Test
+    fun zashboardCatalogueContainsOnlyNodeSelectorAndMigratesOldSelections() {
+        val catalogue = DashboardCardModel.catalogue(
+            SystemInfoSnapshot(openClash = OpenClashDashboardSnapshot()),
+            ServiceType.OPENCLASH,
+        )
+
+        assertEquals(listOf(DashboardCardId.OPENCLASH_NODE_SELECTOR), catalogue.map { it.model.id })
+        assertTrue(catalogue.single().addable)
+        assertEquals(
+            listOf(DashboardCardId.OPENCLASH_NODE_SELECTOR),
+            resolveDashboardCardOrder(
+                serviceType = ServiceType.OPENCLASH,
+                savedCardIds = listOf(DashboardCardId.OPENCLASH_STATUS.name, DashboardCardId.OPENCLASH_MODE.name),
+                catalogue = catalogue,
+            ),
+        )
+        assertTrue(
+            resolveDashboardCardOrder(
+                serviceType = ServiceType.OPENCLASH,
+                savedCardIds = emptyList(),
+                catalogue = catalogue,
+            ).isEmpty(),
+        )
     }
 
     @Test

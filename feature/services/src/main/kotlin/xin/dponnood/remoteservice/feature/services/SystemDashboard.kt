@@ -42,6 +42,7 @@ enum class DashboardCardId {
     LOAD_1,
     LOAD_5,
     LOAD_15,
+    OPENCLASH_NODE_SELECTOR,
     OPENCLASH_STATUS,
     OPENCLASH_VERSION,
     OPENCLASH_MODE,
@@ -103,6 +104,10 @@ data class DashboardCardModel(
             DashboardCardId.NETWORK,
         )
 
+        private val zashboardIds = listOf(
+            DashboardCardId.OPENCLASH_NODE_SELECTOR,
+        )
+
         private val openClashIds = listOf(
             DashboardCardId.OPENCLASH_STATUS, DashboardCardId.OPENCLASH_VERSION,
             DashboardCardId.OPENCLASH_MODE, DashboardCardId.OPENCLASH_CONFIG,
@@ -111,8 +116,6 @@ data class DashboardCardModel(
             DashboardCardId.OPENCLASH_DOWNLOAD_TOTAL, DashboardCardId.OPENCLASH_UPLOAD_TOTAL,
             DashboardCardId.OPENCLASH_CONNECTIONS, DashboardCardId.OPENCLASH_GROUPS,
             DashboardCardId.OPENCLASH_SELECTED_GROUP, DashboardCardId.OPENCLASH_MEMORY,
-            DashboardCardId.CPU, DashboardCardId.TEMPERATURE, DashboardCardId.MEMORY,
-            DashboardCardId.STORAGE, DashboardCardId.NETWORK,
         )
 
         private val dockerIds = listOf(
@@ -154,6 +157,7 @@ data class DashboardCardModel(
             DashboardCardId.LOAD_1 to ("1 分钟负载" to "cpu"),
             DashboardCardId.LOAD_5 to ("5 分钟负载" to "cpu"),
             DashboardCardId.LOAD_15 to ("15 分钟负载" to "cpu"),
+            DashboardCardId.OPENCLASH_NODE_SELECTOR to ("节点选择" to "openclash-groups"),
             DashboardCardId.OPENCLASH_STATUS to ("OpenClash 状态" to "openclash-status"),
             DashboardCardId.OPENCLASH_VERSION to ("代理内核版本" to "openclash-version"),
             DashboardCardId.OPENCLASH_MODE to ("运行模式" to "openclash-mode"),
@@ -187,7 +191,8 @@ data class DashboardCardModel(
         )
 
         fun defaultCardOrder(serviceType: ServiceType): List<DashboardCardId> = when (serviceType) {
-            ServiceType.OPENCLASH -> listOf(
+            ServiceType.OPENCLASH -> zashboardIds
+            ServiceType.OPENCLASH_PANEL -> listOf(
                 DashboardCardId.OPENCLASH_STATUS,
                 DashboardCardId.OPENCLASH_VERSION,
                 DashboardCardId.OPENCLASH_MODE,
@@ -230,20 +235,20 @@ data class DashboardCardModel(
         fun catalogue(snapshot: SystemInfoSnapshot?, serviceType: ServiceType): List<DashboardCardCatalogItem> {
             val effectiveSnapshot = snapshot ?: SystemInfoSnapshot()
             val models = when (serviceType) {
-                ServiceType.OPENCLASH -> openClashCards(effectiveSnapshot.openClash ?: OpenClashDashboardSnapshot())
+                ServiceType.OPENCLASH, ServiceType.OPENCLASH_PANEL ->
+                    openClashCards(effectiveSnapshot.openClash ?: OpenClashDashboardSnapshot())
                 ServiceType.DOCKER -> dockerCards(effectiveSnapshot.docker ?: DockerDashboardSnapshot())
                 else -> systemCards(effectiveSnapshot)
             }.associateBy(DashboardCardModel::id)
             val ids = when (serviceType) {
-                ServiceType.OPENCLASH -> openClashIds
+                ServiceType.OPENCLASH -> zashboardIds
+                ServiceType.OPENCLASH_PANEL -> openClashIds
                 ServiceType.DOCKER -> dockerIds
                 else -> systemIds
             }
             val supported = when (serviceType) {
-                ServiceType.OPENCLASH -> openClashIds.filterNot { it in setOf(
-                    DashboardCardId.CPU, DashboardCardId.TEMPERATURE, DashboardCardId.MEMORY,
-                    DashboardCardId.STORAGE, DashboardCardId.NETWORK,
-                ) }.toSet()
+                ServiceType.OPENCLASH -> zashboardIds.toSet()
+                ServiceType.OPENCLASH_PANEL -> openClashIds.toSet()
                 ServiceType.DOCKER -> dockerIds.toSet()
                 else -> systemIds.filterNot { it in setOf(
                     DashboardCardId.CPU, DashboardCardId.TEMPERATURE, DashboardCardId.STORAGE,
@@ -261,6 +266,8 @@ data class DashboardCardModel(
                         DashboardCardId.NETWORK -> "当前接口不提供网卡实时速率"
                         else -> "此服务的数据接口暂不支持"
                     }
+                    id == DashboardCardId.OPENCLASH_NODE_SELECTOR ->
+                        "仅保留节点选择与延迟检测，供 Zashboard 节点入口使用"
                     model.status == DashboardCardStatus.READY -> "数据源已返回，可添加到本页"
                     serviceType == ServiceType.DOCKER -> "Docker 只读信息接口支持；设备未返回字段时显示暂无数据"
                     snapshot == null -> "该类型服务支持此卡片，等待接口返回数据"
@@ -332,6 +339,12 @@ data class DashboardCardModel(
         )
 
         private fun openClashCards(snapshot: OpenClashDashboardSnapshot): List<DashboardCardModel> = listOf(
+            model(
+                DashboardCardId.OPENCLASH_NODE_SELECTOR,
+                snapshot.selectableGroups.isNotEmpty(),
+                snapshot.selectableGroups.size.takeIf { it > 0 }?.let { "$it 个可切换代理组" } ?: "暂无可切换代理组",
+                "选择节点并检测延迟",
+            ),
             model(DashboardCardId.OPENCLASH_STATUS, snapshot.running != null,
                 when (snapshot.running) { true -> "运行中"; false -> "已停止"; null -> "暂无数据" },
                 snapshot.routeLabel?.let { "线路：$it" } ?: "运行状态"),
@@ -483,7 +496,17 @@ fun resolveDashboardCardOrder(
     val requested = savedCardIds?.mapNotNull { raw ->
         runCatching { DashboardCardId.valueOf(raw) }.getOrNull()
     } ?: DashboardCardModel.defaultCardOrder(serviceType)
-    return requested.distinct().filter { it in supported }
+    val resolved = requested.distinct().filter { it in supported }
+    // Existing Zashboard pages saved OpenClash metric IDs before the selector
+    // became the only card there. Preserve a useful page after upgrade.
+    if (serviceType == ServiceType.OPENCLASH &&
+        !savedCardIds.isNullOrEmpty() &&
+        resolved.isEmpty() &&
+        DashboardCardId.OPENCLASH_NODE_SELECTOR in supported
+    ) {
+        return listOf(DashboardCardId.OPENCLASH_NODE_SELECTOR)
+    }
+    return resolved
 }
 
 fun moveDashboardCard(cardIds: List<String>, cardId: String, offset: Int): List<String> {

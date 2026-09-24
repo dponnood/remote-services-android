@@ -40,6 +40,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -747,8 +748,9 @@ private fun serviceTypeLabel(type: ServiceType): String = when (type) {
 }
 
 private fun ServiceType.usesSystemDashboard(): Boolean = when (this) {
-    ServiceType.ISTORE, ServiceType.LUCI, ServiceType.OPENCLASH, ServiceType.DOCKER -> true
-    ServiceType.OPENCLASH_PANEL, ServiceType.GENERIC, ServiceType.NAS -> false
+    ServiceType.ISTORE, ServiceType.LUCI, ServiceType.OPENCLASH_PANEL,
+    ServiceType.OPENCLASH, ServiceType.DOCKER -> true
+    ServiceType.GENERIC, ServiceType.NAS -> false
 }
 
 @Composable
@@ -975,6 +977,7 @@ private fun DashboardSection(
                 Text(
                     when (service.serviceType) {
                         ServiceType.OPENCLASH -> "Zashboard 节点快速选择"
+                        ServiceType.OPENCLASH_PANEL -> "OpenClash 运行概览"
                         ServiceType.ISTORE -> "iStoreOS 系统概览"
                         ServiceType.LUCI -> "LuCI 系统概览"
                         ServiceType.DOCKER -> "Docker 容器概览"
@@ -1126,20 +1129,47 @@ private fun DashboardSection(
                 }
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    cards.chunked(cardColumns).forEach { rowCards ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            rowCards.forEach { card ->
+                    if (service.serviceType == ServiceType.OPENCLASH) {
+                        cards.forEach { card ->
+                            if (card.id == DashboardCardId.OPENCLASH_NODE_SELECTOR &&
+                                nodeSwitchEnabled && selectableGroups.isNotEmpty()
+                            ) {
+                                OpenClashNodeSelectorCard(
+                                    groups = selectableGroups,
+                                    switchingGroup = switchingNodeGroup,
+                                    feedback = nodeSwitchFeedback,
+                                    nodeSwitchEnabled = nodeSwitchEnabled,
+                                    nodeLatencyEnabled = nodeLatencyEnabled,
+                                    testingNode = testingNode,
+                                    latencyResults = nodeLatencyResults,
+                                    onSelectNode = onSwitchNode,
+                                    onTestNode = onTestNode,
+                                    onSheetVisibilityChange = onSelectorSheetVisibilityChange,
+                                )
+                            } else {
                                 DashboardCard(
                                     model = card,
                                     reduceMotion = reduceMotion,
-                                    modifier = Modifier.weight(1f),
+                                    modifier = Modifier.fillMaxWidth(),
                                 )
                             }
-                            repeat(cardColumns - rowCards.size) {
-                                Spacer(Modifier.weight(1f))
+                        }
+                    } else {
+                        cards.chunked(cardColumns).forEach { rowCards ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                rowCards.forEach { card ->
+                                    DashboardCard(
+                                        model = card,
+                                        reduceMotion = reduceMotion,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                }
+                                repeat(cardColumns - rowCards.size) {
+                                    Spacer(Modifier.weight(1f))
+                                }
                             }
                         }
                     }
@@ -1170,20 +1200,6 @@ private fun DashboardSection(
                     }
                 }
             }
-        }
-        if (service.serviceType == ServiceType.OPENCLASH && nodeSwitchEnabled && selectableGroups.isNotEmpty()) {
-            OpenClashNodeSelectorCard(
-                groups = selectableGroups,
-                switchingGroup = switchingNodeGroup,
-                feedback = nodeSwitchFeedback,
-                nodeSwitchEnabled = nodeSwitchEnabled,
-                nodeLatencyEnabled = nodeLatencyEnabled,
-                testingNode = testingNode,
-                latencyResults = nodeLatencyResults,
-                onSelectNode = onSwitchNode,
-                onTestNode = onTestNode,
-                onSheetVisibilityChange = onSelectorSheetVisibilityChange,
-            )
         }
         if (cardRepositoryOpen) {
             DashboardCardRepositorySheet(
@@ -1802,7 +1818,7 @@ private fun ServicesSidebar(
         .toSortedMap(compareBy<String> { if (it == "未分组") "" else it })
     val hasOpenClashPanel = services.any { it.config.serviceType == ServiceType.OPENCLASH_PANEL }
     val hasZashboard = services.any { it.config.serviceType == ServiceType.OPENCLASH }
-    val sidebarWidth = if (expanded) 216.dp else 64.dp
+    val sidebarWidth = if (expanded) 248.dp else 80.dp
 
     Card(
         modifier = Modifier
@@ -1823,7 +1839,14 @@ private fun ServicesSidebar(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("服务", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Column {
+                        Text("服务", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "按住服务卡片拖动排序",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     Spacer(Modifier.weight(1f))
                     Text("${services.size}", style = MaterialTheme.typography.labelMedium)
                     IconButton(
@@ -1867,12 +1890,14 @@ private fun ServicesSidebar(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    items(groupedServices, key = { "sidebar-service-${it.config.id}" }) { service ->
+                    itemsIndexed(groupedServices, key = { _, service -> "sidebar-service-${service.config.id}" }) { index, service ->
                         ServiceSidebarItem(
                             service = service,
                             selected = service.config.id == selectedServiceId,
                             expanded = expanded,
                             reduceMotion = reduceMotion,
+                            indexInGroup = index,
+                            groupItemCount = groupedServices.size,
                             onClick = { onSelectService(service.config.id) },
                             onMove = { delta ->
                                 onMoveService(service.config.id, delta)
@@ -1981,37 +2006,160 @@ private fun ServiceSidebarItem(
     selected: Boolean,
     expanded: Boolean,
     reduceMotion: Boolean,
+    indexInGroup: Int,
+    groupItemCount: Int,
     onClick: () -> Unit,
     onMove: (Int) -> Unit,
 ) {
+    val density = LocalDensity.current
+    val scope = rememberCoroutineScope()
     val config = service.config
     val motionDuration = RemoteServicesMotion.durationMillis(
         reduceMotion,
         RemoteServicesMotion.StandardMillis,
     )
     val shape = RoundedCornerShape(16.dp)
-    val backgroundColor = if (selected) {
-        MaterialTheme.colorScheme.primaryContainer
-    } else {
-        Color.Transparent
-    }
+    val dragTranslation = remember(config.id) { Animatable(0f) }
+    val layoutTranslation = remember(config.id) { Animatable(0f) }
     var dragDistance by remember(config.id) { mutableFloatStateOf(0f) }
+    var horizontalDragDistance by remember(config.id) { mutableFloatStateOf(0f) }
+    var rowStepPx by remember(config.id) {
+        mutableFloatStateOf(with(density) { (if (expanded) 76.dp else 88.dp).toPx() })
+    }
+    var isDragging by remember(config.id) { mutableStateOf(false) }
+    var skipNextReflow by remember(config.id) { mutableStateOf(false) }
+    var previousIndex by remember(config.id) { mutableIntStateOf(indexInGroup) }
+    var dragOriginIndex by remember(config.id) { mutableIntStateOf(indexInGroup) }
+    var dragCurrentIndex by remember(config.id) { mutableIntStateOf(indexInGroup) }
+    val currentIndex = rememberUpdatedState(indexInGroup)
+    val currentItemCount = rememberUpdatedState(groupItemCount)
+    val currentOnMove = rememberUpdatedState(onMove)
+    val currentRowStepPx = rememberUpdatedState(rowStepPx)
+    val currentReduceMotion = rememberUpdatedState(reduceMotion)
+
+    LaunchedEffect(indexInGroup, rowStepPx) {
+        if (!isDragging) dragCurrentIndex = indexInGroup
+        if (previousIndex != indexInGroup) {
+            val oldIndex = previousIndex
+            previousIndex = indexInGroup
+            if (skipNextReflow) {
+                skipNextReflow = false
+            } else {
+                layoutTranslation.snapTo((oldIndex - indexInGroup) * rowStepPx)
+                if (reduceMotion) {
+                    layoutTranslation.snapTo(0f)
+                } else {
+                    layoutTranslation.animateTo(
+                        targetValue = 0f,
+                        animationSpec = spring(dampingRatio = 0.82f, stiffness = 520f),
+                    )
+                }
+            }
+        }
+    }
+
+    val itemScale by animateFloatAsState(
+        targetValue = if (isDragging && !reduceMotion) 1.045f else 1f,
+        animationSpec = spring(dampingRatio = 0.68f, stiffness = 520f),
+        label = "${config.id}-sidebar-drag-scale",
+    )
+    val itemRotation by animateFloatAsState(
+        targetValue = if (isDragging && !reduceMotion) {
+            (-dragDistance / rowStepPx.coerceAtLeast(1f) * 4f).coerceIn(-5f, 5f)
+        } else {
+            0f
+        },
+        animationSpec = spring(dampingRatio = 0.62f, stiffness = 430f),
+        label = "${config.id}-sidebar-drag-rotation",
+    )
+    val itemElevation by animateDpAsState(
+        targetValue = if (isDragging && !reduceMotion) 18.dp else 0.dp,
+        animationSpec = spring(dampingRatio = 0.72f, stiffness = 480f),
+        label = "${config.id}-sidebar-drag-elevation",
+    )
+
     val dragModifier = Modifier.pointerInput(config.id) {
         detectDragGesturesAfterLongPress(
-            onDragStart = { dragDistance = 0f },
-            onDragCancel = { dragDistance = 0f },
-            onDragEnd = {
-                val delta = when {
-                    dragDistance > 24f -> 1
-                    dragDistance < -24f -> -1
-                    else -> 0
-                }
-                if (delta != 0) onMove(delta)
+            onDragStart = {
                 dragDistance = 0f
+                horizontalDragDistance = 0f
+                dragOriginIndex = currentIndex.value
+                dragCurrentIndex = currentIndex.value
+                isDragging = true
+                scope.launch {
+                    dragTranslation.stop()
+                    dragTranslation.snapTo(0f)
+                }
+            },
+            onDragCancel = {
+                val restoreOffset = dragOriginIndex - dragCurrentIndex
+                val settleFrom = dashboardCardDragTranslation(
+                    originIndex = dragOriginIndex,
+                    currentIndex = dragOriginIndex,
+                    dragDistancePx = dragDistance,
+                    rowStepPx = currentRowStepPx.value,
+                )
+                if (restoreOffset != 0) {
+                    skipNextReflow = true
+                    currentOnMove.value(restoreOffset)
+                    dragCurrentIndex = dragOriginIndex
+                }
+                isDragging = false
+                dragDistance = 0f
+                horizontalDragDistance = 0f
+                scope.launch {
+                    dragTranslation.snapTo(settleFrom)
+                    if (currentReduceMotion.value) {
+                        dragTranslation.snapTo(0f)
+                    } else {
+                        dragTranslation.animateTo(
+                            targetValue = 0f,
+                            animationSpec = spring(dampingRatio = 0.58f, stiffness = 420f),
+                        )
+                    }
+                }
+            },
+            onDragEnd = {
+                isDragging = false
+                dragDistance = 0f
+                horizontalDragDistance = 0f
+                scope.launch {
+                    if (currentReduceMotion.value) {
+                        dragTranslation.snapTo(0f)
+                    } else {
+                        dragTranslation.animateTo(
+                            targetValue = 0f,
+                            animationSpec = spring(dampingRatio = 0.54f, stiffness = 360f),
+                        )
+                    }
+                }
             },
             onDrag = { change, amount ->
                 change.consume()
                 dragDistance += amount.y
+                horizontalDragDistance += amount.x
+                val stepPx = currentRowStepPx.value.coerceAtLeast(with(density) { 68.dp.toPx() })
+                val targetIndex = dashboardCardDragTargetIndex(
+                    originIndex = dragOriginIndex,
+                    dragDistancePx = dragDistance,
+                    rowStepPx = stepPx,
+                    itemCount = currentItemCount.value,
+                )
+                val reorderOffset = targetIndex - dragCurrentIndex
+                if (reorderOffset != 0) {
+                    skipNextReflow = true
+                    currentOnMove.value(reorderOffset)
+                    dragCurrentIndex = targetIndex
+                }
+                val visualOffset = dashboardCardDragTranslation(
+                    originIndex = dragOriginIndex,
+                    currentIndex = dragCurrentIndex,
+                    dragDistancePx = dragDistance,
+                    rowStepPx = stepPx,
+                )
+                scope.launch {
+                    dragTranslation.snapTo(visualOffset)
+                }
             },
         )
     }
@@ -2022,15 +2170,38 @@ private fun ServiceSidebarItem(
         append("，")
         append(service.health.accessibilityLabel())
         append(if (selected) "，当前选中" else "")
-        append("。长按并上下拖动可调整组内顺序")
+        append("。长按并拖动可调整组内顺序")
     }
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
+            .heightIn(min = if (expanded) 68.dp else 78.dp)
+            .zIndex(if (isDragging) 2f else 0f)
+            .graphicsLayer {
+                translationY = dragTranslation.value + layoutTranslation.value
+                scaleX = itemScale
+                scaleY = itemScale
+                rotationX = itemRotation
+                rotationY = if (isDragging && !reduceMotion) {
+                    (horizontalDragDistance / rowStepPx.coerceAtLeast(1f) * 3.5f).coerceIn(-4f, 4f)
+                } else {
+                    0f
+                }
+                cameraDistance = 28f * density.density
+                shadowElevation = with(density) { itemElevation.toPx() }
+                this.shape = shape
+            }
             .clip(shape)
-            .background(backgroundColor)
+            .background(
+                when {
+                    isDragging -> MaterialTheme.colorScheme.surfaceContainerHigh
+                    selected -> MaterialTheme.colorScheme.primaryContainer
+                    else -> Color.Transparent
+                },
+            )
             .animateContentSize(animationSpec = tween(motionDuration))
+            .onSizeChanged { rowStepPx = it.height + with(density) { 4.dp.toPx() } }
             .then(dragModifier)
             .selectable(
                 selected = selected,
@@ -2040,12 +2211,12 @@ private fun ServiceSidebarItem(
             .semantics(mergeDescendants = true) {
                 contentDescription = selectionDescription
             }
-            .padding(horizontal = if (expanded) 8.dp else 2.dp, vertical = if (expanded) 8.dp else 6.dp),
+            .padding(horizontal = if (expanded) 9.dp else 4.dp, vertical = if (expanded) 9.dp else 8.dp),
     ) {
         if (expanded) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                ServiceSidebarGlyph(config.iconKey, selected = selected, size = 36.dp)
-                Spacer(Modifier.width(9.dp))
+                ServiceSidebarGlyph(config.iconKey, selected = selected, size = 40.dp)
+                Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
                         config.displayName,
@@ -2061,17 +2232,22 @@ private fun ServiceSidebarItem(
                         maxLines = 1,
                     )
                 }
-                Icon(
-                    Icons.Outlined.DragHandle,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp),
-                    tint = MaterialTheme.colorScheme.outline,
-                )
+                Box(
+                    modifier = Modifier.size(44.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Outlined.DragHandle,
+                        contentDescription = "拖动排序",
+                        modifier = Modifier.size(22.dp),
+                        tint = MaterialTheme.colorScheme.outline,
+                    )
+                }
             }
         } else {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                ServiceSidebarGlyph(config.iconKey, selected = selected, size = 34.dp)
-                Spacer(Modifier.height(2.dp))
+                ServiceSidebarGlyph(config.iconKey, selected = selected, size = 42.dp)
+                Spacer(Modifier.height(3.dp))
                 Text(
                     config.displayName,
                     modifier = Modifier.widthIn(max = 54.dp),
@@ -2337,6 +2513,7 @@ private fun dashboardIcon(id: DashboardCardId): ImageVector = when (id) {
     DashboardCardId.LOAD_1 -> Icons.Outlined.Refresh
     DashboardCardId.LOAD_5 -> Icons.Outlined.Refresh
     DashboardCardId.LOAD_15 -> Icons.Outlined.Refresh
+    DashboardCardId.OPENCLASH_NODE_SELECTOR -> Icons.Outlined.Lan
     DashboardCardId.OPENCLASH_STATUS -> Icons.Outlined.Lan
     DashboardCardId.OPENCLASH_VERSION -> Icons.Outlined.Info
     DashboardCardId.OPENCLASH_MODE -> Icons.Outlined.Settings

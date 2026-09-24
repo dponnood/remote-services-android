@@ -59,7 +59,7 @@ internal class OpenClashSystemInfoProvider(
     private val lastApiFailureLogAt = ConcurrentHashMap<String, Long>()
 
     override suspend fun load(service: ServiceConfig?): SystemInfoResult {
-        if (service == null || service.serviceType != ServiceType.OPENCLASH) {
+        if (service == null || service.serviceType !in setOf(ServiceType.OPENCLASH, ServiceType.OPENCLASH_PANEL)) {
             return SystemInfoResult.Unavailable("请先添加 OpenClash 服务")
         }
         val resolved = when (val result = routeResolver.resolve(service.toRouteConfig())) {

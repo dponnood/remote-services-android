@@ -11,7 +11,7 @@ class RoutedSystemInfoProvider(
     private val openClashProvider: SystemInfoProvider,
 ) : SystemInfoProvider {
     override suspend fun load(service: ServiceConfig?): SystemInfoResult = when (service?.serviceType) {
-        ServiceType.OPENCLASH -> openClashProvider.load(service)
+        ServiceType.OPENCLASH, ServiceType.OPENCLASH_PANEL -> openClashProvider.load(service)
         else -> iStoreProvider.load(service)
     }
 }
