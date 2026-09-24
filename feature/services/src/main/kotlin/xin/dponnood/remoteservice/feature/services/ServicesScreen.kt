@@ -252,6 +252,8 @@ private fun serviceIcon(iconKey: String): ImageVector =
 fun ServicesScreen(
     store: ServiceConfigStore,
     modifier: Modifier = Modifier,
+    restoredSelectedServiceId: String? = null,
+    onSelectedServiceIdChanged: (String?) -> Unit = {},
     dashboardCardPreferencesStore: DashboardCardPreferencesStore? = null,
     onOpenService: (ServiceConfig) -> Unit = {},
     /** Opens the app-owned credential editor; plaintext never enters this feature state. */
@@ -284,7 +286,7 @@ fun ServicesScreen(
         )
     }
     val state by presenter.state.collectAsState()
-    var savedSelectedServiceId by rememberSaveable { mutableStateOf<String?>(null) }
+    var savedSelectedServiceId by rememberSaveable { mutableStateOf(restoredSelectedServiceId) }
     var sidebarVisible by rememberSaveable { mutableStateOf(true) }
     val selectedServiceId = resolveSelectedServiceId(state.services, savedSelectedServiceId)
     val selectedServiceIdState = rememberUpdatedState(selectedServiceId)
@@ -294,6 +296,12 @@ fun ServicesScreen(
         if (!state.isLoading) {
             val resolvedId = resolveSelectedServiceId(state.services, savedSelectedServiceId)
             if (resolvedId != savedSelectedServiceId) savedSelectedServiceId = resolvedId
+            if (resolvedId != restoredSelectedServiceId) onSelectedServiceIdChanged(resolvedId)
+        }
+    }
+    LaunchedEffect(restoredSelectedServiceId) {
+        if (restoredSelectedServiceId != savedSelectedServiceId) {
+            savedSelectedServiceId = restoredSelectedServiceId
         }
     }
     val dashboardService = selectedService?.config?.takeIf { it.serviceType.usesSystemDashboard() }
@@ -624,7 +632,10 @@ fun ServicesScreen(
             ServicesContent(
                 state = state,
                 selectedServiceId = selectedServiceId,
-                onSelectService = { savedSelectedServiceId = it },
+                onSelectService = {
+                    savedSelectedServiceId = it
+                    onSelectedServiceIdChanged(it)
+                },
                 sidebarVisible = sidebarVisible,
                 onToggleSidebar = { sidebarVisible = it },
                 dashboardState = dashboardState,

@@ -63,6 +63,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -316,12 +317,15 @@ class MainActivity : ComponentActivity() {
         restoreScreen(savedInstanceState)
         enableEdgeToEdge()
         setContent {
+            val selectedServiceId = rememberSaveable { mutableStateOf<String?>(null) }
             RemoteServicesTheme(
                 ambientMotionEnabled = screenState.value !is AppScreen.Web &&
                     screenState.value !is AppScreen.Resolving,
             ) {
                 RemoteServicesApp(
                     screen = screenState.value,
+                    selectedServiceId = selectedServiceId.value,
+                    onSelectedServiceIdChanged = { selectedServiceId.value = it },
                     store = serviceStore,
                     dashboardCardPreferencesStore = dashboardCardPreferencesStore,
                     credentialStore = credentialStore,
@@ -866,6 +870,8 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun RemoteServicesApp(
     screen: AppScreen,
+    selectedServiceId: String?,
+    onSelectedServiceIdChanged: (String?) -> Unit,
     store: ServiceConfigStore,
     dashboardCardPreferencesStore: DashboardCardPreferencesStore,
     credentialStore: CredentialStore,
@@ -906,6 +912,8 @@ private fun RemoteServicesApp(
     when (screen) {
         AppScreen.Services -> ServicesScreen(
             store = store,
+            restoredSelectedServiceId = selectedServiceId,
+            onSelectedServiceIdChanged = onSelectedServiceIdChanged,
             dashboardCardPreferencesStore = dashboardCardPreferencesStore,
             onOpenService = onOpenService,
             onManageCredentials = onManageCredentials,
