@@ -53,8 +53,10 @@ internal fun resolveSelectedServiceId(
 
 sealed interface ServicesIntent {
     data object AddClicked : ServicesIntent
-    /** Opens a preconfigured OpenClash/Zashboard editor from the visible home shortcut. */
+    /** Opens a preconfigured OpenClash management editor from the home shortcut. */
     data object AddOpenClashClicked : ServicesIntent
+    /** Opens a preconfigured Zashboard node-selection editor from the home shortcut. */
+    data object AddZashboardClicked : ServicesIntent
     data class EditClicked(val id: String) : ServicesIntent
     data class DraftChanged(val draft: ServiceDraft) : ServicesIntent
     data object SaveClicked : ServicesIntent

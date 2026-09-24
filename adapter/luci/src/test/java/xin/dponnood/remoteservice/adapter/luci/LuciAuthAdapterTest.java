@@ -89,6 +89,12 @@ public final class LuciAuthAdapterTest {
         assertEquals(
                 LuciSessionState.LOGIN_REQUIRED,
                 LuciDomDetector.INSTANCE.detect(endpoint, "https://192.168.1.1:8443/cgi-bin/luci", null, loginPage));
+        LuciEndpoint openClash = new LuciEndpoint(
+                "openclash", "https://192.168.1.1:8443", "/cgi-bin/luci", ServiceType.OPENCLASH_PANEL);
+        assertEquals(
+                LuciSessionState.LOGIN_REQUIRED,
+                LuciDomDetector.INSTANCE.detect(
+                        openClash, "https://192.168.1.1:8443/cgi-bin/luci", null, loginPage));
         assertEquals(
                 LuciSessionState.UNKNOWN,
                 LuciDomDetector.INSTANCE.detect(endpoint, "https://192.168.1.1/cgi-bin/luci", null, loginPage));

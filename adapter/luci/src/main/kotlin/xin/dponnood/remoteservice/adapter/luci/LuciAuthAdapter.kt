@@ -193,6 +193,7 @@ object LuciDomDetector {
         if (
             endpoint.serviceType != ServiceType.LUCI &&
             endpoint.serviceType != ServiceType.ISTORE &&
+            endpoint.serviceType != ServiceType.OPENCLASH_PANEL &&
             endpoint.serviceType != ServiceType.OPENCLASH
         ) {
             return LuciSessionState.UNKNOWN

@@ -139,7 +139,7 @@ class ServicesPresenterTest {
     }
 
     @Test
-    fun openClashShortcutOpensPreconfiguredEditor() = runTest {
+    fun openClashManagementShortcutOpensPreconfiguredEditor() = runTest {
         val presenter = ServicesPresenter(
             InMemoryServiceConfigStore(),
             CoroutineScope(StandardTestDispatcher(testScheduler) + Job()),
@@ -149,7 +149,26 @@ class ServicesPresenterTest {
         presenter.dispatch(ServicesIntent.AddOpenClashClicked)
 
         val draft = presenter.state.value.editor?.draft
-        assertEquals("OpenClash / Zashboard", draft?.displayName)
+        assertEquals("OpenClash 管理", draft?.displayName)
+        assertEquals(ServiceType.OPENCLASH_PANEL, draft?.serviceType)
+        assertEquals("http://192.168.1.1", draft?.lanUrl)
+        assertEquals("https://i.example.com", draft?.wanUrl)
+        assertTrue(draft?.authEnabled == true)
+        presenter.close()
+    }
+
+    @Test
+    fun zashboardShortcutOpensPreconfiguredNodeSelectionEditor() = runTest {
+        val presenter = ServicesPresenter(
+            InMemoryServiceConfigStore(),
+            CoroutineScope(StandardTestDispatcher(testScheduler) + Job()),
+        )
+        runCurrent()
+
+        presenter.dispatch(ServicesIntent.AddZashboardClicked)
+
+        val draft = presenter.state.value.editor?.draft
+        assertEquals("Zashboard 节点选择", draft?.displayName)
         assertEquals(ServiceType.OPENCLASH, draft?.serviceType)
         assertEquals("http://192.168.1.1", draft?.lanUrl)
         assertEquals("https://i.example.com", draft?.wanUrl)

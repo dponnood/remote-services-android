@@ -480,6 +480,7 @@ class MainActivity : ComponentActivity() {
                     .filter {
                         it.serviceType == ServiceType.ISTORE ||
                             it.serviceType == ServiceType.LUCI ||
+                            it.serviceType == ServiceType.OPENCLASH_PANEL ||
                             it.serviceType == ServiceType.OPENCLASH ||
                             it.serviceType == ServiceType.DOCKER
                     }
@@ -605,6 +606,7 @@ class MainActivity : ComponentActivity() {
             if (
                 service.serviceType == ServiceType.ISTORE ||
                 service.serviceType == ServiceType.LUCI ||
+                service.serviceType == ServiceType.OPENCLASH_PANEL ||
                 service.serviceType == ServiceType.OPENCLASH ||
                 service.serviceType == ServiceType.DOCKER
             ) {
@@ -1130,6 +1132,7 @@ private fun ServiceWebScreen(
             (
                 service.serviceType == ServiceType.LUCI ||
                     service.serviceType == ServiceType.ISTORE ||
+                    service.serviceType == ServiceType.OPENCLASH_PANEL ||
                     service.serviceType == ServiceType.OPENCLASH
                 )
         ) {

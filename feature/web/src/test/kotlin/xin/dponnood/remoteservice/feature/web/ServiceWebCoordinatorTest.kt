@@ -15,6 +15,75 @@ import xin.dponnood.remoteservice.core.network.SsidProvider
 
 class ServiceWebCoordinatorTest {
     @Test
+    fun openClashManagementAppendsClientPathToSelectedRouterOrigin() = runTest {
+        val service = ServiceConfig(
+            id = "openclash-management",
+            displayName = "OpenClash 管理",
+            lanUrl = "http://192.0.2.1/cgi-bin/luci",
+            wanUrl = "https://router.example/cgi-bin/luci",
+            trustedSsids = setOf("Home"),
+            serviceType = ServiceType.OPENCLASH_PANEL,
+        )
+        val resolver = RouteResolver(
+            object : SsidProvider {
+                override fun currentSsid() = "Home"
+                override fun permissionState() = SsidPermissionState.AVAILABLE
+            },
+            object : HealthProbe {
+                override suspend fun probe(url: String, path: String) = HealthProbeResult(true, 200)
+            },
+        )
+
+        val result = ServiceWebCoordinator(resolver).resolve(service)
+
+        val ready = result as ServiceWebOpenResult.Ready
+        assertEquals(RouteKind.INTERNAL, ready.resolution.endpoint.kind)
+        assertEquals(
+            "http://192.0.2.1${OpenClashManagementPageRouteResolver.CLIENT_PATH}",
+            ready.target.url,
+        )
+        assertEquals(setOf("http://192.0.2.1", "https://router.example"), ready.target.allowedOrigins)
+    }
+
+    @Test
+    fun openClashManagementRouteResolverStripsConfiguredPathAndPreservesPort() {
+        assertEquals(
+            "https://192.0.2.1:8443${OpenClashManagementPageRouteResolver.CLIENT_PATH}",
+            OpenClashManagementPageRouteResolver.resolve("https://192.0.2.1:8443/cgi-bin/luci/admin"),
+        )
+    }
+
+    @Test
+    fun openClashManagementUsesPublicOriginWhenWifiIsNotTrusted() = runTest {
+        val service = ServiceConfig(
+            id = "openclash-management",
+            displayName = "OpenClash 管理",
+            lanUrl = "http://192.0.2.1/cgi-bin/luci",
+            wanUrl = "https://router.example/old/path",
+            trustedSsids = setOf("Home"),
+            serviceType = ServiceType.OPENCLASH_PANEL,
+        )
+        val resolver = RouteResolver(
+            object : SsidProvider {
+                override fun currentSsid() = "Guest"
+                override fun permissionState() = SsidPermissionState.AVAILABLE
+            },
+            object : HealthProbe {
+                override suspend fun probe(url: String, path: String) = HealthProbeResult(true, 200)
+            },
+        )
+
+        val result = ServiceWebCoordinator(resolver).resolve(service)
+
+        val ready = result as ServiceWebOpenResult.Ready
+        assertEquals(RouteKind.PUBLIC, ready.resolution.endpoint.kind)
+        assertEquals(
+            "https://router.example${OpenClashManagementPageRouteResolver.CLIENT_PATH}",
+            ready.target.url,
+        )
+    }
+
+    @Test
     fun dockerServiceUsesGetOnlyRouteHealthAndAppendsDetectedDockermanPath() = runTest {
         var getProbes = 0
         var headProbes = 0

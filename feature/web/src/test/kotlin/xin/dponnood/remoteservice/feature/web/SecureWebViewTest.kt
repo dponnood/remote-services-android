@@ -116,6 +116,7 @@ class SecureWebViewTest {
     fun layoutRepairIsLimitedToRouterServicesAndZeroRoot() {
         assertTrue(WebViewLayoutCompatibility.isRouterService(ServiceType.LUCI))
         assertTrue(WebViewLayoutCompatibility.isRouterService(ServiceType.ISTORE))
+        assertTrue(WebViewLayoutCompatibility.isRouterService(ServiceType.OPENCLASH_PANEL))
         assertTrue(WebViewLayoutCompatibility.isRouterService(ServiceType.OPENCLASH))
         assertFalse(WebViewLayoutCompatibility.isRouterService(ServiceType.GENERIC))
         assertFalse(WebViewLayoutCompatibility.isRouterService(ServiceType.NAS))

@@ -47,7 +47,8 @@ class ServicesPresenter(
     fun dispatch(intent: ServicesIntent) {
         when (intent) {
             ServicesIntent.AddClicked -> openNewEditor()
-            ServicesIntent.AddOpenClashClicked -> openNewEditor(ServiceType.OPENCLASH)
+            ServicesIntent.AddOpenClashClicked -> openNewEditor(ServiceType.OPENCLASH_PANEL)
+            ServicesIntent.AddZashboardClicked -> openNewEditor(ServiceType.OPENCLASH)
             is ServicesIntent.EditClicked -> openEditor(intent.id)
             is ServicesIntent.DraftChanged -> updateDraft(intent.draft)
             ServicesIntent.SaveClicked -> save()
@@ -74,13 +75,17 @@ class ServicesPresenter(
         _state.update {
             it.copy(
                 editor = ServiceEditorState(
-                    draft = if (serviceType == ServiceType.OPENCLASH) {
+                    draft = if (serviceType == ServiceType.OPENCLASH_PANEL || serviceType == ServiceType.OPENCLASH) {
                         ServiceDraft(
-                            displayName = "OpenClash / Zashboard",
+                            displayName = if (serviceType == ServiceType.OPENCLASH_PANEL) {
+                                "OpenClash 管理"
+                            } else {
+                                "Zashboard 节点选择"
+                            },
                             lanUrl = "http://192.168.1.1",
                             wanUrl = "https://i.example.com",
                             group = "远程网络",
-                            serviceType = ServiceType.OPENCLASH,
+                            serviceType = serviceType,
                             authEnabled = true,
                         )
                     } else {

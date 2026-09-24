@@ -42,13 +42,20 @@ class ServiceConfigStoreTest {
                 sortOrder = 3,
                 iconKey = "server",
                 trustedSsids = setOf("Home WiFi", "办公网络"),
-                serviceType = ServiceType.NAS,
+                serviceType = ServiceType.OPENCLASH_PANEL,
                 authEnabled = true,
                 connectionPolicy = ConnectionPolicy.PUBLIC_ONLY,
             ),
         )
         val encoded = DataStoreServiceConfigStore.encode(input)
         assertEquals(input, DataStoreServiceConfigStore.decode(encoded))
+    }
+
+    @Test
+    fun legacyOpenClashTypeStillRoundTripsAsZashboard() {
+        val legacy = ServiceConfig("old-openclash", "Zashboard", serviceType = ServiceType.OPENCLASH)
+
+        assertEquals(legacy, DataStoreServiceConfigStore.decode(DataStoreServiceConfigStore.encode(listOf(legacy))).single())
     }
 
     @Test

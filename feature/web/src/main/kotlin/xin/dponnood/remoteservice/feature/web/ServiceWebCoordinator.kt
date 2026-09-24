@@ -61,15 +61,18 @@ class ServiceWebCoordinator(
                         },
                     )
                 }
-                val endpoint = if (dockerResolution != null && baseOrigin != null) {
-                    val path = when (dockerResolution) {
-                        is DockerPageRouteResolution.Confirmed -> dockerResolution.path
-                        is DockerPageRouteResolution.UnverifiedFallback -> dockerResolution.path
-                        is DockerPageRouteResolution.NotFound -> error("Handled above")
+                val endpoint = when {
+                    dockerResolution != null && baseOrigin != null -> {
+                        val path = when (dockerResolution) {
+                            is DockerPageRouteResolution.Confirmed -> dockerResolution.path
+                            is DockerPageRouteResolution.UnverifiedFallback -> dockerResolution.path
+                            is DockerPageRouteResolution.NotFound -> error("Handled above")
+                        }
+                        baseEndpoint.copy(url = baseOrigin + path)
                     }
-                    baseEndpoint.copy(url = baseOrigin + path)
-                } else {
-                    baseEndpoint
+                    service.serviceType == ServiceType.OPENCLASH_PANEL && baseOrigin != null ->
+                        baseEndpoint.copy(url = OpenClashManagementPageRouteResolver.resolve(baseOrigin))
+                    else -> baseEndpoint
                 }
                 val origin = webOrigin(endpoint.url)
                 if (origin == null) {
@@ -131,4 +134,13 @@ class ServiceWebCoordinator(
             it.startsWith("https://")
         }
     }
+}
+
+/** Builds the fixed OpenClash LuCI client path from a user-configured router origin. */
+object OpenClashManagementPageRouteResolver {
+    const val CLIENT_PATH = "/cgi-bin/luci/admin/services/openclash/client"
+
+    fun resolve(baseUrl: String): String =
+        requireNotNull(ServiceWebCoordinator.webOrigin(baseUrl)) { "OpenClash base URL must be HTTP or HTTPS" } +
+            CLIENT_PATH
 }

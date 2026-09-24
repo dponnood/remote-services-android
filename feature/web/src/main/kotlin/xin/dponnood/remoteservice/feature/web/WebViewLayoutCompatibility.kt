@@ -78,6 +78,7 @@ object WebViewLayoutCompatibility {
     fun isRouterService(serviceType: ServiceType): Boolean =
         serviceType == ServiceType.LUCI ||
             serviceType == ServiceType.ISTORE ||
+            serviceType == ServiceType.OPENCLASH_PANEL ||
             serviceType == ServiceType.OPENCLASH
 
     /** Pure policy helper for JVM tests and future hosts. */

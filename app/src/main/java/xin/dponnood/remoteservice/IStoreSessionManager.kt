@@ -131,6 +131,7 @@ class IStoreSessionManager(
         if (
             service.serviceType != ServiceType.ISTORE &&
             service.serviceType != ServiceType.LUCI &&
+            service.serviceType != ServiceType.OPENCLASH_PANEL &&
             service.serviceType != ServiceType.OPENCLASH &&
             service.serviceType != ServiceType.DOCKER
         ) {

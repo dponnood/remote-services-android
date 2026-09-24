@@ -170,6 +170,7 @@ import xin.dponnood.remoteservice.core.model.hasEmbeddedUrlCredentials
 import xin.dponnood.remoteservice.core.model.stripUrlUserInfo
 import xin.dponnood.remoteservice.core.network.WifiNetworkNameProvider
 import xin.dponnood.remoteservice.core.network.WifiNetworkNameResult
+import xin.dponnood.remoteservice.core.network.prioritizeWifiNetworkNames
 
 private val serviceDraftSaver = Saver<ServiceDraft?, List<Any?>>(
     save = { draft ->
@@ -740,13 +741,14 @@ private fun serviceTypeLabel(type: ServiceType): String = when (type) {
     ServiceType.NAS -> "NAS / 存储"
     ServiceType.LUCI -> "路由器 LuCI"
     ServiceType.ISTORE -> "iStoreOS"
-    ServiceType.OPENCLASH -> "OpenClash / Zashboard"
+    ServiceType.OPENCLASH_PANEL -> "OpenClash 管理"
+    ServiceType.OPENCLASH -> "Zashboard 节点选择"
     ServiceType.DOCKER -> "Docker 容器"
 }
 
 private fun ServiceType.usesSystemDashboard(): Boolean = when (this) {
     ServiceType.ISTORE, ServiceType.LUCI, ServiceType.OPENCLASH, ServiceType.DOCKER -> true
-    ServiceType.GENERIC, ServiceType.NAS -> false
+    ServiceType.OPENCLASH_PANEL, ServiceType.GENERIC, ServiceType.NAS -> false
 }
 
 @Composable
@@ -820,6 +822,7 @@ private fun ServicesContent(
                         onSelectService = onSelectService,
                         onAddService = { onIntent(ServicesIntent.AddClicked) },
                         onAddOpenClash = { onIntent(ServicesIntent.AddOpenClashClicked) },
+                        onAddZashboard = { onIntent(ServicesIntent.AddZashboardClicked) },
                         onHideSidebar = { onToggleSidebar(false) },
                         onMoveService = { id, delta ->
                             onIntent(ServicesIntent.MoveWithinGroup(id, delta))
@@ -971,7 +974,7 @@ private fun DashboardSection(
             Column(Modifier.weight(1f)) {
                 Text(
                     when (service.serviceType) {
-                        ServiceType.OPENCLASH -> "OpenClash 状态概览"
+                        ServiceType.OPENCLASH -> "Zashboard 节点快速选择"
                         ServiceType.ISTORE -> "iStoreOS 系统概览"
                         ServiceType.LUCI -> "LuCI 系统概览"
                         ServiceType.DOCKER -> "Docker 容器概览"
@@ -1013,7 +1016,8 @@ private fun DashboardSection(
                 Icon(Icons.Outlined.Lan, contentDescription = null)
                 Spacer(Modifier.width(4.dp))
                 Text(when (service.serviceType) {
-                    ServiceType.OPENCLASH -> "打开 Zashboard"
+                    ServiceType.OPENCLASH -> "打开完整 Zashboard"
+                    ServiceType.OPENCLASH_PANEL -> "打开 OpenClash 管理"
                     ServiceType.DOCKER -> "打开 Docker 管理"
                     else -> "打开网页"
                 })
@@ -1789,13 +1793,15 @@ private fun ServicesSidebar(
     onSelectService: (String) -> Unit,
     onAddService: () -> Unit,
     onAddOpenClash: () -> Unit,
+    onAddZashboard: () -> Unit,
     onHideSidebar: () -> Unit,
     onMoveService: (String, Int) -> Unit,
 ) {
     val groups = services
         .groupBy { it.config.normalizedGroup ?: "未分组" }
         .toSortedMap(compareBy<String> { if (it == "未分组") "" else it })
-    val hasOpenClash = services.any { it.config.serviceType == ServiceType.OPENCLASH }
+    val hasOpenClashPanel = services.any { it.config.serviceType == ServiceType.OPENCLASH_PANEL }
+    val hasZashboard = services.any { it.config.serviceType == ServiceType.OPENCLASH }
     val sidebarWidth = if (expanded) 216.dp else 64.dp
 
     Card(
@@ -1895,7 +1901,7 @@ private fun ServicesSidebar(
                     Icon(Icons.Outlined.Add, contentDescription = "新增服务")
                 }
             }
-            if (!hasOpenClash) {
+            if (!hasOpenClashPanel) {
                 Spacer(Modifier.height(4.dp))
                 if (expanded) {
                     OutlinedButton(
@@ -1905,14 +1911,35 @@ private fun ServicesSidebar(
                     ) {
                         Icon(Icons.Outlined.Lan, contentDescription = null)
                         Spacer(Modifier.width(4.dp))
-                        Text("配置 OpenClash", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("OpenClash 管理", maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 } else {
                     IconButton(
                         onClick = onAddOpenClash,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Icon(Icons.Outlined.Lan, contentDescription = "配置 OpenClash / Zashboard")
+                        Icon(Icons.Outlined.Lan, contentDescription = "新增 OpenClash 管理")
+                    }
+                }
+            }
+            if (!hasZashboard) {
+                Spacer(Modifier.height(4.dp))
+                if (expanded) {
+                    OutlinedButton(
+                        onClick = onAddZashboard,
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                    ) {
+                        Icon(Icons.Outlined.Security, contentDescription = null)
+                        Spacer(Modifier.width(4.dp))
+                        Text("Zashboard 节点", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                } else {
+                    IconButton(
+                        onClick = onAddZashboard,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(Icons.Outlined.Security, contentDescription = "新增 Zashboard 节点选择")
                     }
                 }
             }
@@ -2177,7 +2204,10 @@ private fun ServiceHomeSection(
                     HealthChip(service.health)
                 }
                 Text(
-                    "普通服务没有系统状态面板，可直接打开已配置的服务网页。",
+                    when (config.serviceType) {
+                        ServiceType.OPENCLASH_PANEL -> "独立 OpenClash 管理入口；应用会自动补齐 LuCI 管理目录。"
+                        else -> "普通服务没有系统状态面板，可直接打开已配置的服务网页。"
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -2190,7 +2220,12 @@ private fun ServiceHomeSection(
                 ) {
                     Icon(Icons.Outlined.Language, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
-                    Text("打开网页")
+                    Text(
+                        when (config.serviceType) {
+                            ServiceType.OPENCLASH_PANEL -> "打开 OpenClash 管理"
+                            else -> "打开网页"
+                        },
+                    )
                 }
             }
         }
@@ -2622,12 +2657,24 @@ private fun ServiceEditorSheet(
                     }
                 }
             }
+            when (editor.draft.serviceType) {
+                ServiceType.OPENCLASH_PANEL -> Text(
+                    "填写 iStoreOS 根地址即可；打开时自动进入 OpenClash 管理页：/cgi-bin/luci/admin/services/openclash/client。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                ServiceType.OPENCLASH -> Text(
+                    "此入口用于 Zashboard 节点快速选择；应用会按当前内外网线路获取控制器令牌，不需要手动填写目录或令牌。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                else -> Unit
+            }
             Spacer(Modifier.height(12.dp))
-            val wifiSuggestions = (wifiNames.names + editor.draft.trustedSsids)
-                .map(String::trim)
-                .filter(String::isNotBlank)
-                .distinct()
-                .sortedWith(String.CASE_INSENSITIVE_ORDER)
+            val wifiSuggestions = prioritizeWifiNetworkNames(
+                wifiNames.names + editor.draft.trustedSsids,
+                wifiNames.currentSsid,
+            )
             Box(Modifier.fillMaxWidth()) {
                 OutlinedTextField(
                     value = editor.draft.trustedSsidsText,
@@ -2701,7 +2748,7 @@ private fun ServiceEditorSheet(
                 }
             }
             Text(
-                "可选择手机当前/可见 Wi-Fi；系统限制时仍可手动输入。仅在 SSID 匹配时探测内网。",
+                "列表仅包含系统能提供的已配置、当前连接及本服务已保存名称；Android 10+ 普通应用无法枚举完整系统保存清单，未显示的名称可手动输入。仅在名称匹配时探测内网。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

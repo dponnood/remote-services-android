@@ -72,6 +72,7 @@ import xin.dponnood.remoteservice.core.network.RouteResolver
 import xin.dponnood.remoteservice.core.network.ServiceRouteConfig
 import xin.dponnood.remoteservice.core.network.WifiNetworkNameProvider
 import xin.dponnood.remoteservice.core.network.WifiNetworkNameResult
+import xin.dponnood.remoteservice.core.network.prioritizeWifiNetworkNames
 import xin.dponnood.remoteservice.core.network.toRouteConfig
 import java.net.URI
 
@@ -268,7 +269,6 @@ fun NetworkSettingsScreen(
             onDraftChange = { editorDraft = it },
             onWifiMenuChange = { wifiMenuExpanded = it },
             onRefreshWifiNames = ::refreshWifiNames,
-            onRequestWifiPermissions = onRequestWifiPermissions,
             onDismiss = {
                 if (!editorSaving) {
                     editorService = null
@@ -406,15 +406,13 @@ private fun NetworkEditorDialog(
     onDraftChange: (NetworkDraft) -> Unit,
     onWifiMenuChange: (Boolean) -> Unit,
     onRefreshWifiNames: () -> Unit,
-    onRequestWifiPermissions: () -> Unit,
     onDismiss: () -> Unit,
     onSave: () -> Unit,
 ) {
-    val suggestions = (wifiNames.names + draft.trustedSsids)
-        .map(String::trim)
-        .filter(String::isNotBlank)
-        .distinct()
-        .sortedWith(String.CASE_INSENSITIVE_ORDER)
+    val suggestions = prioritizeWifiNetworkNames(
+        wifiNames.names + draft.trustedSsids,
+        wifiNames.currentSsid,
+    )
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("线路设置 · ${service.displayName}") },
@@ -503,23 +501,21 @@ private fun NetworkEditorDialog(
                                 )
                             }
                         }
-                        if (wifiNames.needsPermission) {
-                            DropdownMenuItem(
-                                text = { Text("允许读取 Wi-Fi 名称…") },
-                                onClick = {
-                                    onWifiMenuChange(false)
-                                    onRequestWifiPermissions()
-                                },
-                            )
-                        }
                         DropdownMenuItem(text = { Text("刷新列表") }, onClick = onRefreshWifiNames)
                     }
                 }
                 Text(
-                    wifiNames.statusMessage ?: "只保存 Wi-Fi 名称，不读取密码；系统限制时可手动输入。",
+                    "列表仅显示系统允许读取的已配置网络、当前连接 Wi-Fi，以及本服务已保存名称。Android 10+ 普通应用无法枚举系统完整的已保存 Wi-Fi；未显示的网络可手动输入。应用只保存名称，不读取密码。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                wifiNames.statusMessage?.let { message ->
+                    Text(
+                        message,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 if (saving) LinearProgressIndicator(Modifier.fillMaxWidth())
             }
         },

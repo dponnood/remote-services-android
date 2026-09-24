@@ -86,7 +86,9 @@ enum class ServiceType {
     NAS,
     LUCI,
     ISTORE,
-    /** OpenClash/Mihomo LuCI panel plus its Clash-compatible API. */
+    /** OpenClash LuCI management page. */
+    OPENCLASH_PANEL,
+    /** Zashboard quick node selection plus the OpenClash/Mihomo compatible API. */
     OPENCLASH,
     /** OpenWrt/iStoreOS Dockerman page and read-only Docker overview. */
     DOCKER,

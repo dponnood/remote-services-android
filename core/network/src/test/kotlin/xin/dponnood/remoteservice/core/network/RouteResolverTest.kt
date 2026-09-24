@@ -322,6 +322,22 @@ class RouteResolverTest {
     }
 
     @Test
+    fun openClashManagementUnauthorizedResponseIsUsableRouteAndKeepsStatus() = runTest {
+        val public = "https://router.example"
+        val probe = FakeProbe(
+            mapOf(public to HealthProbeResult(false, statusCode = 401, errorCode = NetworkErrorCode.HTTP_FAILURE)),
+        )
+
+        val result = RouteResolver(FakeSsidProvider(null, SsidPermissionState.DENIED), probe).resolve(
+            ServiceRouteConfig(publicUrl = public, serviceType = ServiceType.OPENCLASH_PANEL),
+        )
+
+        val success = result as RouteResolutionResult.Success
+        assertTrue(success.value.probe.reachable)
+        assertEquals(401, success.value.probe.statusCode)
+    }
+
+    @Test
     fun genericAuthenticationResponseRemainsUnavailable() = runTest {
         val public = "https://service.example/login"
         val probe = FakeProbe(

@@ -367,6 +367,7 @@ internal fun HealthProbeResult.acceptForRoute(serviceType: ServiceType): HealthP
         reachable ||
         serviceType != ServiceType.LUCI &&
         serviceType != ServiceType.ISTORE &&
+        serviceType != ServiceType.OPENCLASH_PANEL &&
         serviceType != ServiceType.OPENCLASH &&
         serviceType != ServiceType.DOCKER
     ) return this
